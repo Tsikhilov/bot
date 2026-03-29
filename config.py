@@ -1,4 +1,6 @@
-# Description: Configuration file for the bot
+# Description: Configuration file for SmartKamaVPN Bot
+# Panel: https://bot.smartkama.ru/XG2KXE1cOyMGJVEW/
+
 import json
 import logging
 import os
@@ -6,34 +8,35 @@ from urllib.parse import urlparse
 import requests
 from termcolor import colored
 
-# import Utils.utils
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from version import __version__
 
-# PANEL_URL, API_PATH = None, None
-
-# Bypass proxy
 os.environ['no_proxy'] = '*'
 
 VERSION = __version__
 
-USERS_DB_LOC = os.path.join(os.getcwd(), "Database", "smartkamavpn.db")
-LOG_DIR = os.path.join(os.getcwd(), "Logs")
+# Paths
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_DB_LOC = os.path.join(_BASE_DIR, "Database", "smartkamavpn.db")
+LOG_DIR = os.path.join(_BASE_DIR, "Logs")
 LOG_LOC = os.path.join(LOG_DIR, "smartkamavpn.log")
-BACKUP_LOC = os.path.join(os.getcwd(), "Backup")
-RECEIPTIONS_LOC = os.path.join(os.getcwd(), "UserBot", "Receiptions")
-BOT_BACKUP_LOC = os.path.join(os.getcwd(), "Backup", "Bot")
+BACKUP_LOC = os.path.join(_BASE_DIR, "Backup")
+RECEIPTIONS_LOC = os.path.join(_BASE_DIR, "UserBot", "Receiptions")
+BOT_BACKUP_LOC = os.path.join(_BASE_DIR, "Backup", "Bot")
+
+# Hiddify panel
 API_PATH = "/api/v1"
-SMARTKAMAVPN_BOT_ID = "@SmartKamaVPSupport"
+SMARTKAMAVPN_BOT_ID = "@SmartKamaVPNbot"
 
 # if directories not exists, create it
-if not os.path.exists(LOG_DIR):
-    os.mkdir(LOG_DIR)
-if not os.path.exists(BACKUP_LOC):
-    os.mkdir(BACKUP_LOC)
-if not os.path.exists(BOT_BACKUP_LOC):
-    os.mkdir(BOT_BACKUP_LOC)
-if not os.path.exists(RECEIPTIONS_LOC):
-    os.mkdir(RECEIPTIONS_LOC)
+for _d in [LOG_DIR, BACKUP_LOC, BOT_BACKUP_LOC, RECEIPTIONS_LOC,
+           os.path.join(_BASE_DIR, "Database")]:
+    os.makedirs(_d, exist_ok=True)
 
 # set logging  
 logging.basicConfig(handlers=[logging.FileHandler(filename=LOG_LOC,
