@@ -1135,5 +1135,8 @@ class UserDBManager:
             return False
     
 
-USERS_DB_LOC = os.path.join(os.getcwd(), "Database", "hidyBot.db")
+try:
+    from config import USERS_DB_LOC
+except ImportError:
+    USERS_DB_LOC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smartkamavpn.db")
 USERS_DB = UserDBManager(USERS_DB_LOC)

@@ -413,10 +413,7 @@ def create_yookassa_payment(message, amount):
 
             bot.send_message(
                 message.chat.id,
-                f"{MESSAGES['YOOKASSA_PAYMENT_CREATED']}
-
-💰Сумма: {amount}₽
-⏳Платеж действителен 1 час",
+                f"{MESSAGES['YOOKASSA_PAYMENT_CREATED']}\n\n💰Сумма: {amount}₽\n⏳Платеж действителен 1 час",
                 reply_markup=markup
             )
         else:
@@ -813,7 +810,7 @@ def callback_query(call: CallbackQuery):
 
     global selected_server_id
     # ----------------------------------- YooKassa Payment Area -----------------------------------
-    elif key == 'yookassa_payment':
+    if key == 'yookassa_payment':
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, MESSAGES['INCREASE_WALLET_BALANCE_AMOUNT'], reply_markup=cancel_markup())
         bot.register_next_step_handler(call.message, next_step_yookassa_amount)
