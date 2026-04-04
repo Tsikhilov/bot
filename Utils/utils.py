@@ -250,48 +250,35 @@ def user_info(url, uuid):
     return False
 
 
-# Get sub links - return dict of sub links
-def sub_links(uuid, url= None):
-    if not url:
-        non_order_users = USERS_DB.find_non_order_subscription(uuid=uuid)
-        order_users = USERS_DB.find_order_subscription(uuid=uuid)
-        if order_users:
-            order_user = order_users[0]
-            servers = USERS_DB.find_server(id=order_user['server_id'])
-            if servers:
-                server = servers[0]
-                url = server['url']
-        elif non_order_users:
-            non_order_user = non_order_users[0]
-            servers = USERS_DB.find_server(id=non_order_user['server_id'])
-            if servers:
-                server = servers[0]
-                url = server['url']
-        # else:
-        #     servers = USERS_DB.select_servers()
-        #     if servers:
-        #         for server in servers:
-        #             users_list = api.find(server['url'] + API_PATH, uuid)
-        #             if users_list:
-        #                 url = server['url']
-        #                 break
-    BASE_URL = urlparse(url).scheme + "://" + urlparse(url).netloc
-    logging.info(f"Get sub links of user - {uuid}")
-    sub = {}
-    PANEL_DIR = urlparse(url).path.split('/')
-    panel_path = PANEL_DIR[1] if len(PANEL_DIR) > 1 else ''
-    client_proxy_path = _resolve_client_proxy_path(panel_path)
-    # Clash open app: clash://install-config?url=
-    # Hidden open app: clashmeta://install-config?url=
-    sub['clash_configs'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/clash/all.yml"
-    sub['hiddify_configs'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/clash/meta/all.yml"
-    sub['sub_link'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/all.txt"
-    sub['sub_link_b64'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/all.txt?base64=True"
-    # Add in v8.0 Hiddify
-    sub['sub_link_auto'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/sub/?asn=unknown"
-    sub['home_link'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/?home=true&lang=ru"
-    sub['sing_box_full'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/full-singbox.json?asn=unknown"
-    sub['sing_box'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/singbox.json?asn=unknown"
+# Get sub links - return dict of sub links (3x-ui format)
+def sub_links(uuid, url=None):
+    from config import THREEXUI_PANEL_URL
+    SUB_DOMAIN = "sub.smartkama.ru"
+    SUB_PORT = 2096
+
+    # Попробуем получить subId клиента через API
+    try:
+        client_data = api.find(url=THREEXUI_PANEL_URL, uuid=uuid)
+        sub_id = (client_data.get("sub_id") or "") if client_data else ""
+    except Exception:
+        sub_id = ""
+
+    # Если subId не получен — используем первые 8 символов UUID (наш шаблон создания)
+    if not sub_id:
+        sub_id = str(uuid)[:8]
+
+    sub_base = f"https://{SUB_DOMAIN}:{SUB_PORT}/{sub_id}"
+
+    sub = {
+        'sub_link':       sub_base,
+        'sub_link_b64':   sub_base,
+        'sub_link_auto':  sub_base,
+        'clash_configs':  f"{sub_base}?config=clash",
+        'hiddify_configs': sub_base,
+        'sing_box':       sub_base,
+        'sing_box_full':  sub_base,
+        'home_link':      sub_base,
+    }
     return sub
 
 

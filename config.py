@@ -92,8 +92,15 @@ def load_server_url(db):
 
 
 ADMINS_ID, TELEGRAM_TOKEN, CLIENT_TOKEN, PANEL_URL, LANG, PANEL_ADMIN_ID = None, None, None, None, None, None
-HIDDIFY_API_KEY = None
+HIDDIFY_API_KEY = None  # deprecated, оставлен для совместимости
 YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY = None, None
+
+# 3x-ui panel settings (могут быть переопределены через .env или БД)
+THREEXUI_USERNAME = os.getenv("THREEXUI_USERNAME", "admin")
+THREEXUI_PASSWORD = os.getenv("THREEXUI_PASSWORD", "SmartKama2026!")
+THREEXUI_PANEL_URL = os.getenv("THREEXUI_PANEL_URL", "https://sub.smartkama.ru:55445")
+THREEXUI_WEB_BASE_PATH = os.getenv("THREEXUI_WEB_BASE_PATH", "/902184284ee0d060")
+THREEXUI_INBOUND_ID = int(os.getenv("THREEXUI_INBOUND_ID", "1"))
 
 
 def set_config_variables(configs, server_url):
@@ -116,6 +123,7 @@ def set_config_variables(configs, server_url):
 
     global ADMINS_ID, TELEGRAM_TOKEN, PANEL_URL, LANG, PANEL_ADMIN_ID, CLIENT_TOKEN, HIDDIFY_API_KEY
     global YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY
+    global THREEXUI_USERNAME, THREEXUI_PASSWORD, THREEXUI_PANEL_URL, THREEXUI_WEB_BASE_PATH, THREEXUI_INBOUND_ID
 
     if isinstance(raw_admin_ids, str) and raw_admin_ids.strip().startswith("["):
         ADMINS_ID = json.loads(raw_admin_ids)
@@ -129,15 +137,20 @@ def set_config_variables(configs, server_url):
         setup_users_db()
     PANEL_URL = panel_url
     LANG = lang
-    # PANEL URL can contain path slug and API key UUID. Prefer UUID-like segment.
+    # Извлечь UUID из Hiddify-URL (обратная совместимость, для 3x-ui будет None)
     path_parts = [p for p in urlparse(PANEL_URL).path.split('/') if p]
     uuid_like = [p for p in path_parts if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", p)]
     PANEL_ADMIN_ID = uuid_like[0] if uuid_like else None
     HIDDIFY_API_KEY = configs.get("hiddify_api_key") or os.getenv("SMARTKAMA_API_KEY") or PANEL_ADMIN_ID
-    if not PANEL_ADMIN_ID:
-        if not HIDDIFY_API_KEY:
-            print(colored("Admin panel UUID/API key is not valid!", "red"))
-            raise Exception(f"Admin panel UUID/API key is not valid!\nBe in touch with {SMARTKAMAVPN_BOT_ID}")
+
+    # 3x-ui настройки (переопределяют значения по умолчанию если в БД/env заданы)
+    THREEXUI_USERNAME = configs.get("threexui_username") or os.getenv("THREEXUI_USERNAME") or THREEXUI_USERNAME
+    THREEXUI_PASSWORD = configs.get("threexui_password") or os.getenv("THREEXUI_PASSWORD") or THREEXUI_PASSWORD
+    THREEXUI_PANEL_URL = configs.get("threexui_panel_url") or os.getenv("THREEXUI_PANEL_URL") or THREEXUI_PANEL_URL
+    THREEXUI_WEB_BASE_PATH = configs.get("threexui_web_base_path") or os.getenv("THREEXUI_WEB_BASE_PATH") or THREEXUI_WEB_BASE_PATH
+    _inbound_id = configs.get("threexui_inbound_id") or os.getenv("THREEXUI_INBOUND_ID")
+    if _inbound_id:
+        THREEXUI_INBOUND_ID = int(_inbound_id)
 
     # Load YooKassa settings
     YOOKASSA_SHOP_ID = configs.get("yookassa_shop_id")
