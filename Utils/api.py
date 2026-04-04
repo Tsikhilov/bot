@@ -8,6 +8,7 @@ import uuid as _uuid_module
 import datetime
 import time
 import requests
+import urllib3
 from config import (
     THREEXUI_USERNAME, THREEXUI_PASSWORD,
     THREEXUI_PANEL_URL, THREEXUI_WEB_BASE_PATH,
@@ -19,6 +20,9 @@ from config import (
 # ---------------------------------------------------------------------------
 _session = requests.Session()
 _session.headers.update({'Accept': 'application/json'})
+# Panel currently serves cert with IP SAN only, so strict hostname verification fails.
+_session.verify = False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _logged_in = False
 
 

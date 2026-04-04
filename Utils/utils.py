@@ -212,11 +212,18 @@ def calculate_remaining_last_online(last_online_date_time):
 # Process users data - return list of users
 def dict_process(url, users_dict, sub_id=None, server_id=None):
     BASE_URL = urlparse(url,).scheme + "://" + urlparse(url,).netloc
+    panel_parts = [p for p in urlparse(url).path.split('/') if p]
+    panel_path = panel_parts[0] if panel_parts else None
     logging.info(f"Parse users page")
     if not users_dict:
         return False
     users_list = []
     for user in users_dict:
+        if panel_path:
+            user_link = f"{BASE_URL}/{panel_path}/{user['uuid']}/"
+        else:
+            user_link = f"{BASE_URL}/{user['uuid']}/"
+
         users_list.append({
             "name": user['name'],
             "usage": {
@@ -228,7 +235,7 @@ def dict_process(url, users_dict, sub_id=None, server_id=None):
             "comment": user['comment'],
             "last_connection": calculate_remaining_last_online(user['last_online']) if user['last_online'] else None,
             "uuid": user['uuid'],
-            "link": f"{BASE_URL}/{urlparse(url).path.split('/')[1]}/{user['uuid']}/",
+            "link": user_link,
             "mode": user['mode'],
             "enable": user['enable'],
             "sub_id": sub_id,
