@@ -3,11 +3,22 @@ import sqlite3
 from urllib.parse import urlparse
 import requests
 from Database.dbManager import USERS_DB
+from Utils import api
+from config import API_PATH
+
+
+def _to_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def scrape_data_from_json_url(url):
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
 
         # Parse JSON data
@@ -143,37 +154,67 @@ def server_status_template(result, server_name):
     memory_top5 = result.get('memory_top5', 'N/A')
     ram_top5 = result.get('ram_top5', 'N/A')
     # Calculate percentage for RAM and Disk
-    ram_percent = (ram_used / ram_total) * \
-        100 if ram_total != 'N/A' and ram_total != 0 else 'N/A'
-    disk_percent = (disk_used / disk_total) * \
-        100 if disk_total != 'N/A' and disk_total != 0 else 'N/A'
+    ram_total_f = _to_float(ram_total)
+    ram_used_f = _to_float(ram_used)
+    disk_total_f = _to_float(disk_total)
+    disk_used_f = _to_float(disk_used)
+    total_upload_f = _to_float(total_upload_server)
+    total_download_f = _to_float(total_download_server)
+    bytes_recv_f = _to_float(bytes_recv)
+    bytes_sent_f = _to_float(bytes_sent)
+
+    ram_percent = (ram_used_f / ram_total_f) * 100 if ram_total_f > 0 else 0.0
+    disk_percent = (disk_used_f / disk_total_f) * 100 if disk_total_f > 0 else 0.0
+
     # Format bytes with appropriate units
-    formatted_bytes_recv = f"{bytes_recv / (1024 ** 2):.2f} MB" if bytes_recv != 'N/A' else 'N/A'
-    formatted_bytes_sent = f"{bytes_sent / (1024 ** 2):.2f} MB" if bytes_sent != 'N/A' else 'N/A'
+    formatted_bytes_recv = f"{bytes_recv_f / (1024 ** 2):.2f} МБ"
+    formatted_bytes_sent = f"{bytes_sent_f / (1024 ** 2):.2f} МБ"
+
     # Add information for all servers
-    return f"<b>Server: {server_name}</b>\n{lline}\n" \
-                       f"<b>SYSTEM INFO</b>\n"\
-                       f"CPU: {cpu_percent}% - {number_of_cores} CORE\n" \
-                       f"RAM: {ram_used:.2f} GB / {ram_total:.2f} GB ({ram_percent:.2f}%)\n" \
-                       f"DISK: {disk_used:.2f} GB / {disk_total:.2f} GB  ({disk_percent:.2f}%)\n\n" \
-                       f"<b>NETWORK INFO</b>\n"\
-                       f"Total Users: {total_users} User\n" \
-                       f"Usage (Today): {usage_today}\n" \
-                       f"Online (Now): {online_last_5min} User\n" \
-                       f"Now Network Received: {formatted_bytes_recv}\n" \
-                       f"Now Network Sent: {formatted_bytes_sent}\n" \
-                       f"Online (Today): {online_today} User\n" \
-                       f"Online(30 Days): {online_last_30_days} User\n" \
-                       f"Usage(30 Days): {usage_last_30_days}\n"\
-                       f"Total Download (Server): {total_download_server:.2f} GB\n" \
-                       f"Total Upload (Server): {total_upload_server:.2f} GB\n" \
+    return f"<b>Сервер: {server_name}</b>\n{lline}\n" \
+                       f"<b>СИСТЕМА</b>\n"\
+                       f"CPU: {cpu_percent}% - {number_of_cores} ядер\n" \
+                       f"RAM: {ram_used_f:.2f} ГБ / {ram_total_f:.2f} ГБ ({ram_percent:.2f}%)\n" \
+                       f"DISK: {disk_used_f:.2f} ГБ / {disk_total_f:.2f} ГБ ({disk_percent:.2f}%)\n\n" \
+                       f"<b>СЕТЬ</b>\n"\
+                       f"Всего пользователей: {total_users}\n" \
+                       f"Трафик за сегодня: {usage_today}\n" \
+                       f"Онлайн сейчас: {online_last_5min}\n" \
+                       f"Сейчас принято: {formatted_bytes_recv}\n" \
+                       f"Сейчас отправлено: {formatted_bytes_sent}\n" \
+                       f"Онлайн сегодня: {online_today}\n" \
+                       f"Онлайн за 30 дней: {online_last_30_days}\n" \
+                       f"Трафик за 30 дней: {usage_last_30_days}\n"\
+                       f"Всего скачано (сервер): {total_download_f:.2f} ГБ\n" \
+                       f"Всего отправлено (сервер): {total_upload_f:.2f} ГБ\n" \
 
 def get_server_status(server_row):
     server_name = server_row['title']
     server_url = server_row['url']
+
+    # Prefer official API v2 status endpoint with auth header support.
+    api_status = api.get_panel_status(server_url + API_PATH)
+    if isinstance(api_status, dict) and api_status:
+        cpu_percent = _to_float(api_status.get('cpu_percent', api_status.get('cpu', 0.0)))
+        ram_percent = _to_float(api_status.get('ram_percent', api_status.get('memory', 0.0)))
+        disk_percent = _to_float(api_status.get('disk_percent', api_status.get('disk', 0.0)))
+        online_users = api_status.get('online_users', api_status.get('online', 'неизвестно'))
+        total_users = api_status.get('total_users', api_status.get('users', 'неизвестно'))
+        return (
+            f"<b>Сервер: {server_name}</b>\n"
+            f"--------------------------------\n"
+            f"<b>Состояние по API</b>\n"
+            f"CPU: {cpu_percent:.2f}%\n"
+            f"RAM: {ram_percent:.2f}%\n"
+            f"DISK: {disk_percent:.2f}%\n"
+            f"Онлайн пользователей: {online_users}\n"
+            f"Всего пользователей: {total_users}"
+        )
+
+    # Fallback to legacy stats endpoint.
     data = scrape_data_from_json_url(f"{server_url}/admin/get_data/")
     if not data:
-        return False
+        return f"❌Не удается получить статус сервера: {server_name}\nПроверьте доступность панели и API."
     txt = server_status_template(data, server_name)
     return txt
     

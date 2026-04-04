@@ -21,6 +21,14 @@ Panel: <a href="https://bot.smartkama.ru">bot.smartkama.ru</a>
 - [x] Reset user traffic / days
 - [x] And more...
 
+## Website (smartkama.ru)
+
+This repository now includes a static website in `site/` with network tools inspired by lookup services.
+
+- Entry point: `site/index.html`
+- Assets: `site/assets/style.css`, `site/assets/app.js`
+- Instructions: `site/README.md`
+
 ## Installation
 
 Run the following command on your Linux server:

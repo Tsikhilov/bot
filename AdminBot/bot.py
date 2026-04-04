@@ -1180,10 +1180,16 @@ def users_bot_send_message_to_user(message: Message, telegram_id):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call: CallbackQuery):
     logging.info(f"Callback Query: {call.data}")
-    bot.answer_callback_query(call.id, MESSAGES['WAIT'])
+    try:
+        bot.answer_callback_query(call.id, MESSAGES['WAIT'])
+    except telebot.apihelper.ApiTelegramException:
+        pass
     # Check if user is not admin
     if call.from_user.id not in ADMINS_ID:
-        bot.answer_callback_query(call.id, MESSAGES['ERROR_NOT_ADMIN'])
+        try:
+            bot.answer_callback_query(call.id, MESSAGES['ERROR_NOT_ADMIN'])
+        except telebot.apihelper.ApiTelegramException:
+            pass
         return
     bot.clear_step_handler(call.message)
     # Split Callback Data to Key(Command) and UUID
@@ -2831,9 +2837,6 @@ def callback_query(call: CallbackQuery):
             return
         server = server[0]
         server_status_data = get_server_status(server)
-        if not server_status_data:
-            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
-            return
         bot.delete_message(call.message.chat.id, msg_wait.message_id)
         bot.send_message(call.message.chat.id, server_status_data, reply_markup=markups.main_menu_keyboard_markup())
     

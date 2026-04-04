@@ -130,8 +130,16 @@ def plans_list_markup(plans, renewal=False,uuid=None):
     if renewal:
         keys.append(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_user_panel:{uuid}"))
     else:
-        keys.append(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_servers:None"))
+        keys.append(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_buy_types:None"))
     markup.add(*keys)
+    return markup
+
+
+def subscription_type_markup():
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("👤 Индивидуальный (2 устройства)", callback_data="buy_type_selected:individual"))
+    markup.add(InlineKeyboardButton("👨‍👩‍👧‍👦 Семейный (5 устройств)", callback_data="buy_type_selected:family"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="del_msg:None"))
     return markup
 
 
@@ -242,4 +250,114 @@ def payment_method_selection_markup():
     markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_CARD'], callback_data=f"increase_wallet_balance:wallet"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_YOOKASSA'], callback_data=f"yookassa_payment:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"del_msg:None"))
+    return markup
+
+
+def velvet_vpn_subscriptions_markup(subscriptions):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    if subscriptions:
+        for sub in subscriptions:
+            uuid = sub.get('uuid') if isinstance(sub, dict) else None
+            if not uuid:
+                continue
+            title = sub.get('name') if isinstance(sub, dict) else None
+            if not title:
+                title = sub.get('title') if isinstance(sub, dict) else None
+            if not title:
+                title = f"Подписка {str(uuid)[:8]}" if uuid else "Подписка"
+            cb_val = uuid if uuid else "None"
+            markup.add(InlineKeyboardButton(f"🔹 {title}", callback_data=f"velvet_sub_open:{cb_val}"))
+    markup.add(InlineKeyboardButton("🔙 В меню", callback_data="del_msg:None"))
+    return markup
+
+
+def velvet_subscription_actions_markup(uuid, sub_id='-'):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("⚙️ Настройка", callback_data=f"velvet_setup:{uuid}"))
+    markup.add(InlineKeyboardButton(f"📱 Мои устройства (#{sub_id})", callback_data=f"velvet_devices:{uuid}:1"))
+    markup.add(InlineKeyboardButton("🌐 Подписка", callback_data=f"velvet_params:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 К подпискам", callback_data="velvet_vpn_menu:None"))
+    return markup
+
+
+def velvet_setup_markup(uuid):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("📱 Показать QR-код подписки", callback_data=f"conf_sub_auto:{uuid}"))
+    markup.add(InlineKeyboardButton("📘 Инструкция", callback_data=f"velvet_manual:{uuid}"))
+    markup.add(InlineKeyboardButton("🆘 Не получается подключить", callback_data=f"velvet_support:{uuid}"))
+    markup.add(InlineKeyboardButton("📶 LTE пакеты", callback_data=f"velvet_lte:{uuid}"))
+    markup.add(InlineKeyboardButton("✅ Готово", callback_data=f"velvet_done:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
+
+
+def velvet_devices_markup(uuid, page, total_pages, item_indexes=None):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 2
+    current_page = max(1, int(page) + 1)
+    prev_page = current_page - 1 if current_page > 1 else 1
+    next_page = current_page + 1 if current_page < total_pages else total_pages
+    markup.add(
+        InlineKeyboardButton("⬅️", callback_data=f"velvet_devices:{uuid}:{prev_page}"),
+        InlineKeyboardButton(f"{current_page}/{total_pages}", callback_data=f"velvet_devices:{uuid}:{current_page}"),
+        InlineKeyboardButton("➡️", callback_data=f"velvet_devices:{uuid}:{next_page}")
+    )
+    if item_indexes:
+        for idx in item_indexes:
+            pos = int(idx) + 1
+            markup.add(
+                InlineKeyboardButton(f"🔒 Блок #{pos}", callback_data=f"velvet_dev_block:{uuid}|{idx}"),
+                InlineKeyboardButton(f"🗑 Удалить #{pos}", callback_data=f"velvet_dev_del:{uuid}|{idx}"),
+            )
+    markup.add(InlineKeyboardButton("🔙 К подписке", callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
+
+
+def velvet_lte_packages_markup(uuid):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("1 ГБ - 99 ₽", callback_data=f"velvet_lte_buy:{uuid}:1:99"))
+    markup.add(InlineKeyboardButton("5 ГБ - 399 ₽", callback_data=f"velvet_lte_buy:{uuid}:5:399"))
+    markup.add(InlineKeyboardButton("10 ГБ - 699 ₽", callback_data=f"velvet_lte_buy:{uuid}:10:699"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_setup:{uuid}"))
+    return markup
+
+
+def velvet_referral_markup(ref_link):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("📋 Скопировать ссылку", switch_inline_query=ref_link))
+    return markup
+
+
+def velvet_params_markup(uuid, home_web_url=None):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("🔗 Подписка", callback_data=f"conf_sub_auto:{uuid}"))
+    if home_web_url:
+        markup.add(InlineKeyboardButton("🌐 Открыть сайт подписки", url=home_web_url))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
+
+
+def velvet_help_markup(support_username=None):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    if support_username:
+        username = str(support_username).replace("@", "")
+        markup.add(InlineKeyboardButton("💬 Поддержка", url=f"https://t.me/{username}"))
+    return markup
+
+
+def velvet_about_markup():
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("📝 Отзывы", callback_data="velvet_info:reviews"))
+    markup.add(InlineKeyboardButton("🔐 Политика", callback_data="velvet_info:privacy"))
+    markup.add(InlineKeyboardButton("📜 Соглашение", callback_data="velvet_info:agreement"))
+    markup.add(InlineKeyboardButton("🗂 Персональные данные", callback_data="velvet_info:pd"))
+    markup.add(InlineKeyboardButton("🛡 Поддержка", callback_data="velvet_info:support"))
     return markup

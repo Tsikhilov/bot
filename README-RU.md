@@ -51,6 +51,39 @@ python3 config.py
 python3 smartkamavpnTelegramBot.py
 ```
 
+## Прод-проверка API (рекомендуется)
+
+Перед перезапуском сервиса можно выполнить end-to-end проверку API панели:
+
+```bash
+python3 scripts/selfcheck_api.py
+```
+
+Скрипт автоматически проверяет `create -> read -> delete` тестового пользователя через `/api/v2`.
+При успехе выводит `SELF_CHECK_OK`.
+
+## Нативная русификация Hiddify (без прокси-версии страницы)
+
+Для применения полного набора (переводы `ru.json`, fallback для `en.json`, no-cache для `i18n`, cron-переапплай после обновлений):
+
+```powershell
+pwsh -NoProfile -File .\scripts\deploy_hiddify_native_ru.ps1
+```
+
+Локальный запуск на сервере (если уже скопирован `scripts/hiddify_native_ru.py`):
+
+```bash
+python3 /opt/SmartKamaVPN/scripts/hiddify_native_ru.py --apply --force-en-ru --nginx-reload --install-cron
+```
+
+Проверка русификации и кэша i18n:
+
+```bash
+python3 scripts/selfcheck_hiddify_ru.py --uuid <subscription_uuid>
+```
+
+Если UUID не передан, скрипт проверит только i18n JSON и заголовки no-cache.
+
 ## Настройка ЮKassa
 
 1. Получите Shop ID и Secret Key в личном кабинете ЮKassa

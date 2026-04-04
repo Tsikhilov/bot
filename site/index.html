@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SmartKamaVPN</title>
+    <meta
+      name="description"
+      content="SmartKamaVPN tools: IP lookup, DNS lookup, domain profile, and utility generators."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./assets/style.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <header class="hero">
+      <nav class="topbar">
+        <div class="brand">SmartKamaVPN</div>
+      </nav>
+
+      <div class="hero-content">
+        <p class="kicker">Network Diagnostics</p>
+        <h1>SmartKamaVPN Radar</h1>
+        <p class="lead">
+          Fast tools for IP intelligence, DNS records, and domain diagnostics.
+          Built for users who need clear answers in seconds.
+        </p>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="card card-large reveal" id="my-ip-card">
+        <h2>Your Public IP</h2>
+        <p class="muted">Auto-detected from your current connection.</p>
+        <div class="ip-value" id="my-ip">Loading...</div>
+        <div class="meta-grid" id="my-ip-meta"></div>
+        <button class="btn" id="refresh-ip" type="button">Refresh</button>
+      </section>
+
+      <section class="card reveal" id="ip-lookup-card">
+        <h2>IP Lookup</h2>
+        <form id="ip-lookup-form">
+          <label for="ip-input">IP address</label>
+          <div class="row">
+            <input id="ip-input" name="ip" placeholder="8.8.8.8" required />
+            <button class="btn" type="submit">Lookup</button>
+          </div>
+        </form>
+        <pre class="result" id="ip-result">Enter an IP and press Lookup.</pre>
+      </section>
+
+      <section class="card reveal" id="dns-card">
+        <h2>DNS Lookup</h2>
+        <form id="dns-form">
+          <label for="dns-domain">Domain</label>
+          <input id="dns-domain" name="domain" placeholder="example.com" required />
+          <label for="dns-type">Record type</label>
+          <select id="dns-type" name="type">
+            <option value="A">A</option>
+            <option value="AAAA">AAAA</option>
+            <option value="MX">MX</option>
+            <option value="TXT">TXT</option>
+            <option value="NS">NS</option>
+          </select>
+          <button class="btn" type="submit">Resolve</button>
+        </form>
+        <pre class="result" id="dns-result">Enter a domain and choose record type.</pre>
+      </section>
+
+      <section class="card reveal" id="domain-card">
+        <h2>Domain Profile</h2>
+        <form id="domain-form">
+          <label for="domain-input">Domain</label>
+          <div class="row">
+            <input id="domain-input" name="domain" placeholder="smartkama.ru" required />
+            <button class="btn" type="submit">Check</button>
+          </div>
+        </form>
+        <pre class="result" id="domain-result">Enter a domain and press Check.</pre>
+      </section>
+
+      <section class="card reveal" id="utility-card">
+        <h2>Quick Utilities</h2>
+        <div class="utility-block">
+          <h3>Password Generator</h3>
+          <div class="row">
+            <input id="password-length" type="number" min="8" max="64" value="18" />
+            <button class="btn" id="generate-password" type="button">Generate</button>
+          </div>
+          <code id="password-output">-</code>
+        </div>
+
+        <div class="utility-block">
+          <h3>UUID v4</h3>
+          <button class="btn" id="generate-uuid" type="button">Generate UUID</button>
+          <code id="uuid-output">-</code>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>SmartKamaVPN tools page</p>
+    </footer>
+
+    <script src="./assets/app.js" defer></script>
+  </body>
+</html>

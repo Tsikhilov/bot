@@ -2,7 +2,13 @@ import datetime
 import random
 import os
 import time
-from urllib.parse import urlparse
+import sqlite3
+import secrets
+import string
+import re
+import html
+from urllib.parse import urlparse, quote
+import requests
 
 import telebot
 from telebot.types import Message, CallbackQuery
@@ -27,6 +33,31 @@ except Exception as e:
 admin_bot = admin_bot()
 BASE_URL = f"{urlparse(PANEL_URL).scheme}://{urlparse(PANEL_URL).netloc}"
 selected_server_id = 0
+buy_subscription_type = {}
+_short_link_cache = {}
+
+TARIFF_CATALOG = {
+    'individual': {
+        'max_ips': 2,
+        'description': 'индивидуальный (до 2 устройств)',
+        'plans': [
+            {'id': 2101, 'days': 30, 'price_rub': 195},
+            {'id': 2103, 'days': 90, 'price_rub': 500},
+            {'id': 2106, 'days': 180, 'price_rub': 900},
+            {'id': 2112, 'days': 365, 'price_rub': 1600},
+        ],
+    },
+    'family': {
+        'max_ips': 5,
+        'description': 'семейный (до 5 устройств)',
+        'plans': [
+            {'id': 2201, 'days': 30, 'price_rub': 195},
+            {'id': 2203, 'days': 90, 'price_rub': 500},
+            {'id': 2206, 'days': 180, 'price_rub': 900},
+            {'id': 2212, 'days': 365, 'price_rub': 1600},
+        ],
+    },
+}
 
 # Initialize YooKassa if configured
 yookassa_client = None
@@ -131,7 +162,395 @@ def _build_status_link(settings):
     status_cfg = USERS_DB.find_str_config(key='status_page_url')
     if status_cfg and status_cfg[0].get('value'):
         return status_cfg[0]['value']
-    return "https://t.me/velvetvpnstatus"
+    return "не указан"
+
+
+def _get_main_server():
+    default_servers = USERS_DB.find_server(default_server=True)
+    if default_servers:
+        return default_servers[0]
+    servers = USERS_DB.select_servers()
+    if servers:
+        return servers[0]
+    return None
+
+
+def _plan_type_from_max_ips(max_ips):
+    normalized = _to_positive_int(max_ips)
+    if normalized == 5:
+        return 'family'
+    if normalized == 2:
+        return 'individual'
+    if normalized and normalized > 2:
+        return 'family'
+    return 'individual'
+
+
+def _plan_device_limit(plan):
+    plan_id = int(plan.get('id', 0) or 0)
+    if 2200 < plan_id < 2300:
+        return 5
+    if 2100 < plan_id < 2200:
+        return 2
+
+    desc = str(plan.get('description') or '').lower()
+    if '5 устрой' in desc or 'семейн' in desc or 'family' in desc:
+        return 5
+    return 2
+
+
+def _to_positive_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        iv = int(value)
+        return iv if iv > 0 else None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.isdigit():
+            iv = int(cleaned)
+            return iv if iv > 0 else None
+    return None
+
+
+def _extract_max_ips_from_comment(comment):
+    if not comment:
+        return None
+    text = str(comment)
+    m = re.search(r"(?:^|[;,\s])max_ips\s*=\s*(\d+)(?:$|[;,\s])", text, flags=re.IGNORECASE)
+    if not m:
+        return None
+    return _to_positive_int(m.group(1))
+
+
+def _resolve_user_max_ips(raw_user, sub_record):
+    if isinstance(raw_user, dict):
+        for key in ('max_ips', 'maxIps', 'max_clients', 'maxClients'):
+            value = _to_positive_int(raw_user.get(key))
+            if value:
+                return value
+
+        from_comment = _extract_max_ips_from_comment(raw_user.get('comment'))
+        if from_comment:
+            return from_comment
+
+    if isinstance(sub_record, dict):
+        order_id = sub_record.get('order_id')
+        if order_id:
+            orders = USERS_DB.find_order(id=order_id)
+            if orders:
+                order = orders[0]
+                plan_id = order.get('plan_id')
+                if plan_id:
+                    plans = USERS_DB.find_plan(id=plan_id)
+                    if plans:
+                        return _plan_device_limit(plans[0])
+    return None
+
+
+def _plan_type_label(max_ips):
+    if max_ips == 2:
+        return 'индивидуальный (до 2 устройств)'
+    if max_ips == 5:
+        return 'семейный (до 5 устройств)'
+    if isinstance(max_ips, int) and max_ips > 0:
+        return f'до {max_ips} устройств'
+    return 'по данным панели'
+
+
+def _device_category_from_text(text):
+    t = (text or '').lower()
+    if any(k in t for k in ('android', 'ios', 'iphone', 'redmi', 'samsung', 'pixel', 'phone', 'телефон', 'смартфон', 'айфон')):
+        return 'phone'
+    if any(k in t for k in ('ipad', 'tablet', 'tab', 'планшет')):
+        return 'tablet'
+    if any(k in t for k in ('tv', 'android tv', 'smart tv', 'apple tv', 'телевизор', 'тв')):
+        return 'tv'
+    if any(k in t for k in ('windows', 'mac', 'linux', 'ubuntu', 'debian', 'pc', 'desktop', 'laptop', 'ноут', 'компьютер', 'пк')):
+        return 'pc'
+    return 'other'
+
+
+def _device_usage_summary(devices):
+    counts = {'phone': 0, 'tablet': 0, 'pc': 0, 'tv': 0, 'other': 0}
+    for item in devices or []:
+        counts[_device_category_from_text(item)] += 1
+    return (
+        f"📱 Телефоны: {counts['phone']}\n"
+        f"📟 Планшеты: {counts['tablet']}\n"
+        f"💻 Компьютеры: {counts['pc']}\n"
+        f"📺 ТВ: {counts['tv']}\n"
+        f"🔎 Другое: {counts['other']}"
+    )
+
+
+def _build_setup_v2_text(uuid, sub_id):
+    server_url = _get_server_api_url_by_uuid(uuid)
+    source_url = None
+    if server_url:
+        links = utils.sub_links(uuid, url=server_url.replace(API_PATH, ''))
+        if links:
+            source_url = links.get('sub_link') or links.get('sub_link_auto')
+    if not source_url:
+        links = utils.sub_links(uuid)
+        source_url = (links or {}).get('sub_link') or (links or {}).get('sub_link_auto')
+    if not source_url:
+        return MESSAGES['VELVET_SETUP_TEXT'].format(sub_id=sub_id)
+
+    encoded = quote(source_url, safe='')
+    happ_deeplink = f"v2raytun://install-config?url={encoded}"
+    hiddify_deeplink = f"hiddify://install-config?url={encoded}"
+
+    return (
+        f"🔧Настройка SmartKamaVPN #{sub_id}\n\n"
+        f"1️⃣ Установите приложение:\n"
+        f"• iPhone: <a href=\"https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973\">App Store (RU)</a> | "
+        f"<a href=\"https://apps.apple.com/us/app/happ-proxy-utility/id6504287215\">App Store (Global)</a>\n"
+        f"• Android: <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a> | "
+        f"<a href=\"https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk\">APK</a>\n"
+        f"• Windows: <a href=\"https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe\">Скачать</a>\n"
+        f"• Linux: <a href=\"https://github.com/Happ-proxy/happ-desktop/releases/\">GitHub релизы</a>\n\n"
+        f"2️⃣ Добавьте подписку:\n"
+        f"• Авто-импорт (V2RayTun): <code>{html.escape(happ_deeplink)}</code>\n"
+        f"• Авто-импорт (Hiddify): <code>{html.escape(hiddify_deeplink)}</code>\n"
+        f"• Универсальная ссылка подписки: <code>{html.escape(source_url)}</code>\n\n"
+        f"Если авто-импорт не сработал, нажмите «🔧 Ручная настройка» или «🆘 Не получается подключить»."
+    )
+
+
+def _direct_home_url_from_sub_link(sub_link):
+    if not sub_link:
+        return None
+    parsed = urlparse(sub_link)
+    parts = [p for p in (parsed.path or '').split('/') if p]
+    uuid_idx = None
+    for i, p in enumerate(parts):
+        if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", p):
+            uuid_idx = i
+            break
+    if uuid_idx is None:
+        return None
+    direct_path = "/" + "/".join(parts[:uuid_idx + 1]) + "/"
+    return f"{parsed.scheme}://{parsed.netloc}{direct_path}?home=true"
+
+
+def _short_link_base():
+    parsed = urlparse(PANEL_URL)
+    return f"{parsed.scheme}://{parsed.netloc}/s"
+
+
+def _ensure_short_links_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS short_links (
+            token TEXT PRIMARY KEY,
+            target_url TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS short_links_meta (
+            token TEXT PRIMARY KEY,
+            remaining_days INTEGER,
+            remaining_hours INTEGER,
+            remaining_minutes INTEGER,
+            usage_current REAL,
+            usage_limit REAL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(token) REFERENCES short_links(token) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.commit()
+
+
+def _get_or_create_short_token(target_url):
+    conn = sqlite3.connect(USERS_DB_LOC)
+    try:
+        _ensure_short_links_table(conn)
+        row = conn.execute("SELECT token FROM short_links WHERE target_url=?", (target_url,)).fetchone()
+        if row:
+            return row[0]
+
+        alphabet = string.ascii_lowercase + string.digits
+        for _ in range(20):
+            token = ''.join(secrets.choice(alphabet) for _ in range(5))
+            exists = conn.execute("SELECT 1 FROM short_links WHERE token=?", (token,)).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                "INSERT INTO short_links(token, target_url, created_at) VALUES(?,?,?)",
+                (token, target_url, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            conn.commit()
+            return token
+
+        # Fallback to a longer token if collisions continue.
+        token = ''.join(secrets.choice(alphabet) for _ in range(8))
+        conn.execute(
+            "INSERT OR REPLACE INTO short_links(token, target_url, created_at) VALUES(?,?,?)",
+            (token, target_url, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def _shorten_url(url):
+    if not url:
+        return url
+    if url in _short_link_cache:
+        return _short_link_cache[url]
+
+    try:
+        token = _get_or_create_short_token(url)
+        short = f"{_short_link_base()}/{token}"
+        _short_link_cache[url] = short
+        return short
+    except Exception as e:
+        logging.warning(f"Failed to create internal short link: {e}")
+        _short_link_cache[url] = url
+        return url
+
+
+def _remaining_time_parts(remaining_day):
+    try:
+        import pytz
+        now = datetime.datetime.now(pytz.timezone('Asia/Tehran'))
+    except Exception:
+        now = datetime.datetime.now()
+
+    days = int(remaining_day) if remaining_day is not None else 0
+    if days <= 0:
+        return 0, 0, 0
+
+    minutes_to_midnight = (24 * 60) - (now.hour * 60 + now.minute)
+    if minutes_to_midnight < 0:
+        minutes_to_midnight = 0
+    total_minutes = max(0, (days - 1) * 24 * 60 + minutes_to_midnight)
+
+    d = total_minutes // (24 * 60)
+    h = (total_minutes % (24 * 60)) // 60
+    m = total_minutes % 60
+    return d, h, m
+
+
+def _format_time_left(remaining_day):
+    d, h, m = _remaining_time_parts(remaining_day)
+    return f"{d} дн. {h} ч. {m} мин."
+
+
+def _usage_numbers(usage):
+    usage = usage if isinstance(usage, dict) else {}
+    used = float(usage.get('current_usage_GB', 0) or 0)
+    limit = float(usage.get('usage_limit_GB', 0) or 0)
+    remaining = max(0.0, limit - used)
+    return used, limit, remaining
+
+
+def _save_short_link_meta(token, sub_data):
+    if not token or not isinstance(sub_data, dict):
+        return
+
+    usage = sub_data.get('usage', {}) if isinstance(sub_data.get('usage'), dict) else {}
+    remaining_day = sub_data.get('remaining_day', 0)
+    d, h, m = _remaining_time_parts(remaining_day)
+
+    conn = sqlite3.connect(USERS_DB_LOC)
+    try:
+        _ensure_short_links_table(conn)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO short_links_meta(
+                token, remaining_days, remaining_hours, remaining_minutes,
+                usage_current, usage_limit, updated_at
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+            (
+                token,
+                int(d),
+                int(h),
+                int(m),
+                float(usage.get('current_usage_GB', 0) or 0),
+                float(usage.get('usage_limit_GB', 0) or 0),
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _shorten_subscription_url(url, sub_data=None):
+    if not url:
+        return url
+
+    try:
+        token = _get_or_create_short_token(url)
+        if sub_data:
+            _save_short_link_meta(token, sub_data)
+        short = f"{_short_link_base()}/{token}"
+        short_app = f"{short}?app=1" if '?' not in short else f"{short}&app=1"
+        _short_link_cache[url] = short_app
+        return short_app
+    except Exception as e:
+        logging.warning(f"Failed to build subscription short link: {e}")
+        return _shorten_url(url)
+
+
+def _subscription_belongs_to_user(uuid, telegram_id):
+    if utils.is_it_subscription_by_uuid_and_telegram_id(uuid, telegram_id):
+        return True
+    for sub in _get_subscriptions_for_user(telegram_id):
+        if str(sub.get('uuid')) == str(uuid):
+            return True
+    return False
+
+
+def _ensure_single_server_tariff_plans():
+    server = _get_main_server()
+    if not server:
+        return False
+
+    # Internal prices are x10; UI converts to visible rub with rial_to_toman.
+    for tariff in TARIFF_CATALOG.values():
+        for item in tariff['plans']:
+            plan_id = item['id']
+            payload = {
+                'size_gb': 1000,
+                'days': item['days'],
+                'price': item['price_rub'] * 10,
+                'server_id': server['id'],
+                'description': tariff['description'],
+                'status': True,
+            }
+            exists = USERS_DB.find_plan(id=plan_id)
+            if exists:
+                USERS_DB.edit_plan(
+                    plan_id,
+                    size_gb=payload['size_gb'],
+                    days=payload['days'],
+                    price=payload['price'],
+                    server_id=payload['server_id'],
+                    description=payload['description'],
+                    status=payload['status'],
+                )
+            else:
+                USERS_DB.add_plan(
+                    plan_id,
+                    payload['size_gb'],
+                    payload['days'],
+                    payload['price'],
+                    payload['server_id'],
+                    description=payload['description'],
+                    status=payload['status'],
+                )
+    return True
 
 
 def _get_subscriptions_for_user(telegram_id):
@@ -153,20 +572,50 @@ def _get_subscriptions_for_user(telegram_id):
 
 def _get_server_api_url_by_uuid(uuid):
     sub = utils.find_order_subscription_by_uuid(uuid)
-    if not sub:
+    if sub and sub.get('server_id'):
+        server = USERS_DB.find_server(id=sub['server_id'])
+        if server:
+            api_url = server[0]['url'] + API_PATH
+            try:
+                if api.find(api_url, uuid=uuid):
+                    return api_url
+            except Exception:
+                pass
+
+    # Fallback: search user UUID across all configured servers.
+    servers = USERS_DB.select_servers() or []
+    for server in servers:
+        api_url = server['url'] + API_PATH
+        try:
+            if api.find(api_url, uuid=uuid):
+                return api_url
+        except Exception:
+            continue
+
+    main_server = _get_main_server()
+    if not main_server:
         return None
-    server = USERS_DB.find_server(id=sub['server_id'])
-    if not server:
-        return None
-    return server[0]['url'] + API_PATH
+    return main_server['url'] + API_PATH
 
 
 def _extract_devices(raw_user):
+    return [entry['label'] for entry in _extract_device_entries(raw_user)]
+
+
+def _extract_device_entries(raw_user):
     if not raw_user:
         return []
 
     candidate_keys = ['ips', 'connected_ips', 'online_ips', 'devices', 'clients']
-    devices = []
+    entries = []
+
+    def _append_entry(label, action_key=None):
+        clean_label = str(label or '').strip()
+        if not clean_label:
+            return
+        clean_key = str(action_key or '').strip() if action_key else ''
+        entries.append({'label': clean_label, 'key': clean_key or clean_label})
+
     for key in candidate_keys:
         value = raw_user.get(key)
         if not value:
@@ -177,26 +626,45 @@ def _extract_devices(raw_user):
                     title = item.get('name') or item.get('device') or item.get('user_agent') or item.get('ip')
                     os_name = item.get('os') or item.get('platform')
                     app_name = item.get('app') or item.get('client')
-                    if title:
-                        parts = [title]
-                        if os_name:
-                            parts.append(os_name)
-                        if app_name:
-                            parts.append(app_name)
-                        devices.append(' | '.join(parts))
+                    device_key = item.get('ip') or item.get('name') or item.get('device') or item.get('id')
+                    parts = [x for x in [title, os_name, app_name] if x]
+                    _append_entry(' | '.join(parts) if parts else title, action_key=device_key)
                 elif isinstance(item, str):
-                    devices.append(item)
+                    _append_entry(item, action_key=item)
         elif isinstance(value, dict):
             for dev_key, dev_val in value.items():
                 if isinstance(dev_val, dict):
                     os_name = dev_val.get('os') or dev_val.get('platform') or ''
                     app_name = dev_val.get('app') or dev_val.get('client') or ''
-                    devices.append(' | '.join([x for x in [str(dev_key), os_name, app_name] if x]))
+                    label = ' | '.join([x for x in [str(dev_key), os_name, app_name] if x])
+                    _append_entry(label, action_key=dev_val.get('ip') or dev_key)
                 else:
-                    devices.append(str(dev_key))
+                    _append_entry(str(dev_key), action_key=dev_key)
 
-    # Keep order and unique values.
-    return list(dict.fromkeys([d for d in devices if d]))
+    seen = set()
+    result = []
+    for item in entries:
+        fingerprint = f"{item['label']}|{item['key']}"
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        result.append(item)
+    return result
+
+
+def _sync_user_max_ips(server_url, uuid, raw_user, max_ips):
+    if not server_url or not isinstance(raw_user, dict):
+        return False
+    if not isinstance(max_ips, int) or max_ips <= 0:
+        return False
+    current = _to_positive_int(raw_user.get('max_ips'))
+    if current == max_ips:
+        return False
+    status = api.update(server_url, uuid, max_ips=max_ips)
+    if status:
+        raw_user['max_ips'] = max_ips
+        return True
+    return False
 
 
 def _send_velvet_main_menu(chat_id):
@@ -206,10 +674,22 @@ def _send_velvet_main_menu(chat_id):
     if wallet:
         balance = int(wallet[0]['balance'])
 
+    subscriptions = _get_subscriptions_for_user(chat_id)
+    active_subs = [s for s in subscriptions if s.get('active')]
+    if active_subs:
+        nearest = sorted(active_subs, key=lambda s: s.get('remaining_day', 0))[0]
+        time_left = _format_time_left(nearest.get('remaining_day', 0))
+        _used, limit, remaining = _usage_numbers(nearest.get('usage'))
+        sub_status_text = f"активна, осталось {time_left}, трафик: {remaining:.2f}/{limit:.2f} ГБ"
+    elif subscriptions:
+        sub_status_text = "подписки есть, но активных нет"
+    else:
+        sub_status_text = "активной подписки нет"
+
     msg = MESSAGES['VELVET_MAIN_MENU'].format(
         bonus=utils.rial_to_toman(balance),
         channel_link=_build_channel_link(settings),
-        status_link=_build_status_link(settings),
+        subscription_status=sub_status_text,
     )
     bot.send_message(chat_id, msg, reply_markup=main_menu_keyboard_markup())
 
@@ -238,22 +718,80 @@ def _render_subscription_details(uuid):
     if processed:
         sub_data = processed[0]
 
-    links = utils.sub_links(uuid)
+    links = utils.sub_links(uuid, url=server_url.replace(API_PATH, ''))
     if not links or not sub_data:
         return None
 
-    sub_id = sub_data.get('sub_id') or (utils.find_order_subscription_by_uuid(uuid) or {}).get('id', '-')
+    sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
+    sub_id = sub_data.get('sub_id') or sub_record.get('id', '-')
     remaining_day = sub_data.get('remaining_day', 0)
     usage = sub_data.get('usage', {})
-    status_line = f"{usage.get('current_usage_GB', 0)} / {usage.get('usage_limit_GB', 0)} ГБ"
+    used_gb, limit_gb, remaining_gb = _usage_numbers(usage)
+    time_left = _format_time_left(remaining_day)
+
+    max_ips = _resolve_user_max_ips(user_raw, sub_record)
+    _sync_user_max_ips(server_url, uuid, user_raw, max_ips)
+    plan_type = _plan_type_label(max_ips)
+
+    connected = len(_extract_devices(user_raw)) if user_raw else 0
+    limit = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
+
+    subscription_link = links.get('sub_link_auto') or links.get('sub_link')
+    home_web_url = links.get('home_link') or ''
 
     text = MESSAGES['VELVET_SUB_CARD'].format(
         sub_id=sub_id,
-        plan_type='семейная (до 10 устройств)',
+        plan_type=plan_type,
         days=remaining_day,
-        sub_link=links['sub_link_auto'],
-    ) + f"\n\n📊Трафик: {status_line}"
-    return text, links['home_link']
+        sub_link=subscription_link,
+    ) + (
+        f"\n\n🌐Ссылка на сайт подписки:\n{home_web_url}"
+        f"\n\n📊Трафик: израсходовано {used_gb:.2f} / {limit_gb:.2f} ГБ"
+        f"\n📉Осталось трафика: {remaining_gb:.2f} ГБ"
+        f"\n⏳До окончания: {time_left}"
+        f"\n📱Устройства: {connected}/{limit}"
+    )
+    return text, sub_id
+
+
+def _get_available_servers_with_capacity():
+    server = _get_main_server()
+    if not server:
+        return []
+    users_list = api.select(server['url'] + API_PATH)
+    users_count = len(users_list) if users_list else 0
+    if server['user_limit'] > users_count:
+        return [server]
+    return []
+
+
+def _plans_for_buy_type(type_key, server_id=None):
+    if server_id:
+        server_rows = USERS_DB.find_server(id=server_id)
+        server = server_rows[0] if server_rows else None
+    else:
+        server = _get_main_server()
+    if not server:
+        return []
+
+    plans = USERS_DB.find_plan(server_id=server['id']) or []
+
+    plans = [p for p in plans if p.get('status')]
+    if not plans:
+        return []
+
+    keywords = {
+        'individual': ('индив', 'individual', '2 устрой', '2 device'),
+        'family': ('семейн', 'family', '5 устрой', '5 device'),
+    }
+    type_words = keywords.get(type_key, ())
+    filtered = []
+    for plan in plans:
+        desc = str(plan.get('description') or '').lower()
+        if any(w in desc for w in type_words):
+            filtered.append(plan)
+
+    return filtered if filtered else plans
 
 # Next Step Buy From Wallet - Confirm
 def buy_from_wallet_confirm(message: Message, plan):
@@ -267,6 +805,7 @@ def buy_from_wallet_confirm(message: Message, plan):
         # Wallet not created
         bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],
                          reply_markup=wallet_info_markup())
+        return
     if wallet:
         wallet = wallet[0]
         if plan['price'] > wallet['balance']:
@@ -360,18 +899,21 @@ def renewal_from_wallet_confirm(message: Message):
                          reply_markup=main_menu_keyboard_markup())
         return   
     settings = utils.all_configs_settings()
+    max_ips_limit = _plan_device_limit(plan_info)
+    tariff_type = _plan_type_from_max_ips(max_ips_limit)
+    sub_comment = f"HidyBot:{sub['id']};type={tariff_type};max_ips={max_ips_limit}"
     #Default renewal mode
     if settings['renewal_method'] == 1:
         if user_info_process['remaining_day'] <= 0 or user_info_process['usage']['remaining_usage_GB'] <= 0:
             new_usage_limit = plan_info['size_gb']
             new_package_days = plan_info['days']
             current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
+            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days, start_date=last_reset_time, current_usage_GB=current_usage_GB, comment=sub_comment, max_ips=max_ips_limit)
 
         else:
             new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
             new_package_days = plan_info['days'] + (user_info['package_days'] - user_info_process['remaining_day'])
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
+            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days, last_reset_time=last_reset_time, comment=sub_comment, max_ips=max_ips_limit)
 
 
     #advance renewal mode        
@@ -379,7 +921,7 @@ def renewal_from_wallet_confirm(message: Message):
             new_usage_limit = plan_info['size_gb']
             new_package_days = plan_info['days']
             current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, start_date=last_reset_time, package_days=new_package_days, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
+            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, start_date=last_reset_time, package_days=new_package_days, current_usage_GB=current_usage_GB, comment=sub_comment, max_ips=max_ips_limit)
 
     
     #Fair renewal mode
@@ -388,12 +930,12 @@ def renewal_from_wallet_confirm(message: Message):
             new_usage_limit = plan_info['size_gb']
             new_package_days = plan_info['days']
             current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
+            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days, start_date=last_reset_time, current_usage_GB=current_usage_GB, comment=sub_comment, max_ips=max_ips_limit)
         else:
             print(user_info)
             new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
             new_package_days = plan_info['days'] + user_info['package_days']
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit,package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
+            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days, last_reset_time=last_reset_time, comment=sub_comment, max_ips=max_ips_limit)
 
             
 
@@ -672,7 +1214,17 @@ def next_step_send_name_for_buy_from_wallet(message: Message, plan):
 
     # value = ADMIN_DB.add_default_user(name, plan['days'], plan['size_gb'],)
     sub_id = random.randint(1000000, 9999999)
-    value = api.insert(URL, name=name, usage_limit_GB=plan['size_gb'], package_days=plan['days'],comment=f"HidyBot:{sub_id}")
+    selected_type = buy_subscription_type.get(message.chat.id, 'individual')
+    max_ips = 2 if selected_type == 'individual' else 5
+    type_label = 'individual' if selected_type == 'individual' else 'family'
+    value = api.insert(
+        URL,
+        name=name,
+        usage_limit_GB=plan['size_gb'],
+        package_days=plan['days'],
+        comment=f"HidyBot:{sub_id};type={type_label};max_ips={max_ips}",
+        max_ips=max_ips,
+    )
     if not value:
         bot.send_message(message.chat.id,
                          f"{MESSAGES['UNKNOWN_ERROR']}:Create User Error\n{MESSAGES['ORDER_ID']} {order_id}",
@@ -705,6 +1257,11 @@ def next_step_send_name_for_buy_from_wallet(message: Message, plan):
                      reply_markup=main_menu_keyboard_markup())
     
     user_info = api.find(URL, value)
+    if not user_info:
+        bot.send_message(message.chat.id,
+                         f"{MESSAGES['UNKNOWN_ERROR']}:Read Created User Error\n{MESSAGES['ORDER_ID']} {order_id}",
+                         reply_markup=main_menu_keyboard_markup())
+        return
     user_info = utils.users_to_dict([user_info])
     user_info = utils.dict_process(URL, user_info)
     user_info = user_info[0]
@@ -874,8 +1431,10 @@ def next_step_increase_wallet_balance(message):
 
     charge_wallet['id'] = random.randint(1000000, 9999999)
     # Send 0 to identify wallet balance charge
-    bot.send_message(message.chat.id,
-                     owner_info_template(settings['card_number'], settings['card_holder'], charge_wallet['amount']),
+    payment_text = owner_info_template(settings['card_number'], settings['card_holder'], charge_wallet['amount'])
+    if not payment_text or not str(payment_text).strip():
+        payment_text = MESSAGES['UNKNOWN_ERROR']
+    bot.send_message(message.chat.id, payment_text,
                      reply_markup=send_screenshot_markup(plan_id=charge_wallet['id']))
 
 def increase_wallet_balance_specific(message,amount):
@@ -942,14 +1501,17 @@ def update_info_subscription(message: Message, uuid,markup=None):
 # *********************************** Callback Query Area ***********************************
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call: CallbackQuery):
-    bot.answer_callback_query(call.id, MESSAGES['WAIT'])
+    try:
+        bot.answer_callback_query(call.id, MESSAGES['WAIT'])
+    except telebot.apihelper.ApiTelegramException:
+        pass
     bot.clear_step_handler(call.message)
     if is_user_banned(call.message.chat.id):
         return
     # Split Callback Data to Key(Command) and UUID
-    data = call.data.split(':')
+    data = call.data.split(':', 1)
     key = data[0]
-    value = data[1]
+    value = data[1] if len(data) > 1 else ""
 
     global selected_server_id
     # ----------------------------------- YooKassa Payment Area -----------------------------------
@@ -1008,20 +1570,13 @@ def callback_query(call: CallbackQuery):
 
     # ----------------------------------- Buy Plan Area -----------------------------------
     elif key == 'server_selected':
-        if value == 'False':
-            bot.send_message(call.message.chat.id, MESSAGES['SERVER_IS_FULL'], reply_markup=main_menu_keyboard_markup())
-            return
-        selected_server_id = int(value)
-        plans = USERS_DB.find_plan(server_id=int(value))
-        if not plans:
-            bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
-            return
-        plan_markup = plans_list_markup(plans)
-        if not plan_markup:
-            bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
-            return
-        bot.edit_message_text(MESSAGES['PLANS_LIST'], call.message.chat.id, call.message.message_id,
-                                    reply_markup=plan_markup)
+        # Legacy callback compatibility: explicit server selection removed.
+        bot.edit_message_text(
+            text=MESSAGES['BUY_TYPE_SELECT'],
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=subscription_type_markup(),
+        )
         
     elif key == 'free_test_server_selected':
         if value == 'False':
@@ -1039,21 +1594,46 @@ def callback_query(call: CallbackQuery):
             bot.register_next_step_handler(call.message, next_step_send_name_for_get_free_test, value)
     # Send Asked Plan Info
     elif key == 'plan_selected':
-        plan = USERS_DB.find_plan(id=value)[0]
-        if not plan:
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                              reply_markup=main_menu_keyboard_markup())
             return
+        plan = plan_rows[0]
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                               text=plan_info_template(plan),
                               reply_markup=confirm_buy_plan_markup(plan['id']))
 
+    elif key == 'buy_type_selected':
+        _ensure_single_server_tariff_plans()
+        plans = _plans_for_buy_type(value)
+        if not plans:
+            bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
+            return
+        buy_subscription_type[call.message.chat.id] = value
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=MESSAGES['PLANS_LIST'],
+            reply_markup=plans_list_markup(plans),
+        )
+
     # Confirm To Buy From Wallet
     elif key == 'confirm_buy_from_wallet':
-        plan = USERS_DB.find_plan(id=value)[0]
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        plan = plan_rows[0]
         buy_from_wallet_confirm(call.message, plan)
     elif key == 'confirm_renewal_from_wallet':
-        plan = USERS_DB.find_plan(id=value)[0]
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        plan = plan_rows[0]
         renewal_from_wallet_confirm(call.message)
 
     # Ask To Send Screenshot
@@ -1144,7 +1724,11 @@ def callback_query(call: CallbackQuery):
             'uuid': None,
             'plan_id': None,
         }
-        plans = USERS_DB.find_plan(server_id=selected_server_id)
+        raw_max_ips = user.get('max_ips') if isinstance(user, dict) else None
+        renewal_type = _plan_type_from_max_ips(raw_max_ips)
+        buy_subscription_type[call.message.chat.id] = renewal_type
+        _ensure_single_server_tariff_plans()
+        plans = _plans_for_buy_type(renewal_type, server_id=selected_server_id)
         if not plans:
             bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'],
                              reply_markup=main_menu_keyboard_markup())
@@ -1154,11 +1738,12 @@ def callback_query(call: CallbackQuery):
                                       reply_markup=plans_list_markup(plans, renewal=True,uuid=user_info_process['uuid']))
 
     elif key == 'renewal_plan_selected':
-        plan = USERS_DB.find_plan(id=value)[0]
-        if not plan:
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
             bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'],
                              reply_markup=main_menu_keyboard_markup())
             return
+        plan = plan_rows[0]
         renew_subscription_dict[call.message.chat.id]['plan_id'] = plan['id']
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                               text=plan_info_template(plan),
@@ -1311,14 +1896,23 @@ def callback_query(call: CallbackQuery):
         if not sub:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
-        qr_code = utils.txt_to_qr(sub['sub_link_auto'])
+        target_sub_link = sub.get('sub_link_auto') or sub.get('sub_link')
+        sub_data = None
+        server_url = _get_server_api_url_by_uuid(value)
+        if server_url:
+            raw_user = api.find(server_url, uuid=value)
+            user_info = utils.users_to_dict([raw_user]) if raw_user else None
+            processed = utils.dict_process(server_url, user_info) if user_info else None
+            if processed:
+                sub_data = processed[0]
+        qr_code = utils.txt_to_qr(target_sub_link)
         if not qr_code:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
         bot.send_photo(
             call.message.chat.id,
             photo=qr_code,
-            caption=f"{KEY_MARKUP['CONFIGS_SUB_AUTO']}\n<code>{sub['sub_link_auto']}</code>",
+            caption=f"{KEY_MARKUP['CONFIGS_SUB_AUTO']}\n<code>{target_sub_link}</code>",
             reply_markup=main_menu_keyboard_markup()
         )
 
@@ -1385,31 +1979,41 @@ def callback_query(call: CallbackQuery):
         )
 
     elif key == "velvet_sub_open":
+        if not _subscription_belongs_to_user(value, call.message.chat.id):
+            bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
+            return
         details = _render_subscription_details(value)
         if not details:
             bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
             return
-        text, home_link = details
-        bot.edit_message_text(
-            text=text,
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=velvet_subscription_actions_markup(value, home_link),
-            disable_web_page_preview=True,
-        )
+        text, sub_id = details
+        try:
+            bot.edit_message_text(
+                text=text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=velvet_subscription_actions_markup(value, sub_id),
+                disable_web_page_preview=True,
+            )
+        except telebot.apihelper.ApiTelegramException:
+            bot.send_message(
+                call.message.chat.id,
+                text=text,
+                reply_markup=velvet_subscription_actions_markup(value, sub_id),
+                disable_web_page_preview=True,
+            )
 
     elif key == "velvet_setup":
         details = _render_subscription_details(value)
         if not details:
             bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
             return
-        text, home_link = details
-        sub_id = text.split('#')[-1].split('\n')[0] if '#' in text else '-'
+        _, sub_id = details
         bot.edit_message_text(
-            text=MESSAGES['VELVET_SETUP_TEXT'].format(sub_id=sub_id),
+            text=_build_setup_v2_text(value, sub_id),
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            reply_markup=velvet_setup_markup(value, home_link),
+            reply_markup=velvet_setup_markup(value),
             disable_web_page_preview=True,
         )
 
@@ -1427,46 +2031,140 @@ def callback_query(call: CallbackQuery):
         bot.send_message(call.message.chat.id, "✅Отлично! Если понадобится помощь, нажмите «🆘Помощь».", reply_markup=main_menu_keyboard_markup())
 
     elif key == "velvet_params":
-        bot.edit_message_text(
-            text=MESSAGES['USER_CONFIGS_LIST'],
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=sub_url_user_list_markup(value)
+        server_url = _get_server_api_url_by_uuid(value)
+        panel_base = server_url.replace(API_PATH, '') if server_url else None
+        links = utils.sub_links(value, url=panel_base) if panel_base else utils.sub_links(value)
+        # Native Hiddify route: https://<host>/<client_path>/<uuid>/?home=true
+        home_web_url = (links or {}).get('home_link')
+        params_text = (
+            "\U0001f310 <b>Подписка SmartKamaVPN</b>\n\n"
+            "Выберите действие:\n"
+            "• 🔗 Подписка — открыть QR и ссылку для подключения\n"
+            "• 🌐 Открыть сайт подписки — открыть страницу в панели\n"
+            f"<code>{html.escape(home_web_url or '')}</code>"
         )
+        try:
+            bot.edit_message_text(
+                text=params_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=velvet_params_markup(value, home_web_url),
+                disable_web_page_preview=True,
+            )
+        except telebot.apihelper.ApiTelegramException:
+            bot.send_message(
+                call.message.chat.id,
+                params_text,
+                reply_markup=velvet_params_markup(value, home_web_url),
+                disable_web_page_preview=True,
+            )
 
     elif key == "velvet_devices":
-        page_str, uuid = value.split('|', 1)
-        page = max(0, int(page_str))
+        if '|' in value:
+            page_str, uuid = value.split('|', 1)
+            page = max(0, int(page_str))
+        elif ':' in value:
+            uuid, page_str = value.split(':', 1)
+            page = max(0, int(page_str) - 1)
+        else:
+            uuid = value
+            page = 0
         server_url = _get_server_api_url_by_uuid(uuid)
         raw_user = api.find(server_url, uuid=uuid) if server_url else None
-        devices = _extract_devices(raw_user)
-        max_ips = 10
-        if raw_user and isinstance(raw_user.get('max_ips'), int) and raw_user['max_ips'] > 0:
-            max_ips = raw_user['max_ips']
+        device_entries = _extract_device_entries(raw_user)
+        devices = [entry['label'] for entry in device_entries]
+        sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
+        max_ips = _resolve_user_max_ips(raw_user, sub_record)
+        _sync_user_max_ips(server_url, uuid, raw_user, max_ips)
+        limit_label = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
 
         if not devices:
             lines = MESSAGES['VELVET_DEVICES_EMPTY']
             total_pages = 1
+            page_item_indexes = []
         else:
             page_size = 5
             total_pages = max(1, (len(devices) + page_size - 1) // page_size)
             page = min(page, total_pages - 1)
             page_items = devices[page * page_size:(page + 1) * page_size]
+            page_item_indexes = list(range(page * page_size, page * page_size + len(page_items)))
             lines = "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(page_items, start=page * page_size)])
 
-        sub = utils.find_order_subscription_by_uuid(uuid)
+        sub = sub_record
         sub_id = sub['id'] if sub else '-'
+        summary = _device_usage_summary(devices)
         text = MESSAGES['VELVET_DEVICES_TEXT'].format(
             sub_id=sub_id,
             used=len(devices),
-            limit=max_ips,
-            devices=lines,
+            limit=limit_label,
+            devices=f"{summary}\n\n{lines}",
         )
         bot.edit_message_text(
             text=text,
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            reply_markup=velvet_devices_markup(uuid, page, total_pages),
+            reply_markup=velvet_devices_markup(uuid, page, total_pages, page_item_indexes),
+        )
+
+    elif key in ("velvet_dev_block", "velvet_dev_del"):
+        if '|' not in value:
+            bot.answer_callback_query(call.id, MESSAGES['UNKNOWN_ERROR'], show_alert=True)
+            return
+        uuid, idx_str = value.split('|', 1)
+        if not idx_str.isdigit():
+            bot.answer_callback_query(call.id, MESSAGES['UNKNOWN_ERROR'], show_alert=True)
+            return
+
+        idx = int(idx_str)
+        server_url = _get_server_api_url_by_uuid(uuid)
+        raw_user = api.find(server_url, uuid=uuid) if server_url else None
+        entries = _extract_device_entries(raw_user)
+        if idx < 0 or idx >= len(entries):
+            bot.answer_callback_query(call.id, "Устройство не найдено", show_alert=True)
+            return
+
+        target = entries[idx]
+        action_ok = False
+        if key == "velvet_dev_block":
+            action_ok = api.block_device(server_url, uuid, target.get('key')) if server_url else False
+            bot.answer_callback_query(call.id, "Устройство заблокировано" if action_ok else "Не удалось заблокировать", show_alert=not action_ok)
+        else:
+            action_ok = api.delete_device(server_url, uuid, target.get('key')) if server_url else False
+            bot.answer_callback_query(call.id, "Устройство удалено" if action_ok else "Не удалось удалить", show_alert=not action_ok)
+
+        # Refresh devices view after action.
+        raw_user = api.find(server_url, uuid=uuid) if server_url else None
+        device_entries = _extract_device_entries(raw_user)
+        devices = [entry['label'] for entry in device_entries]
+        sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
+        max_ips = _resolve_user_max_ips(raw_user, sub_record)
+        _sync_user_max_ips(server_url, uuid, raw_user, max_ips)
+        limit_label = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
+
+        page_size = 5
+        total_pages = max(1, (len(devices) + page_size - 1) // page_size) if devices else 1
+        page = min(idx // page_size, total_pages - 1)
+        if not devices:
+            lines = MESSAGES['VELVET_DEVICES_EMPTY']
+            page_item_indexes = []
+        else:
+            page_items = devices[page * page_size:(page + 1) * page_size]
+            page_item_indexes = list(range(page * page_size, page * page_size + len(page_items)))
+            lines = "\n".join([f"{n + 1}. {item}" for n, item in enumerate(page_items, start=page * page_size)])
+
+        sub_id = sub_record['id'] if sub_record else '-'
+        summary = _device_usage_summary(devices)
+        text = MESSAGES['VELVET_DEVICES_TEXT'].format(
+            sub_id=sub_id,
+            used=len(devices),
+            limit=limit_label,
+            devices=f"{summary}\n\n{lines}",
+        )
+        bot.edit_message_text(
+            text=text,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=velvet_devices_markup(uuid, page, total_pages, page_item_indexes),
         )
 
     elif key == "velvet_lte":
@@ -1478,21 +2176,78 @@ def callback_query(call: CallbackQuery):
         )
 
     elif key == "velvet_lte_buy":
-        uuid, gb, price = value.split('|')
+        if '|' in value:
+            uuid, gb, price = value.split('|')
+        else:
+            uuid, gb, price = value.split(':')
+        gb_int = int(gb)
+        price_int = int(price)
+        price_internal = price_int * 10
+        wallet = USERS_DB.find_wallet(telegram_id=call.message.chat.id)
+        balance = int(wallet[0]['balance']) if wallet else 0
+        if balance < price_internal:
+            needed = price_internal - balance
+            bot.send_message(
+                call.message.chat.id,
+                MESSAGES['LACK_OF_WALLET_BALANCE'],
+                reply_markup=wallet_info_specific_markup(needed)
+            )
+            return
+        new_balance = balance - price_internal
+        edit_ok = USERS_DB.edit_wallet(call.message.chat.id, balance=new_balance)
+        if not edit_ok:
+            bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=main_menu_keyboard_markup())
+            return
+        server_url = _get_server_api_url_by_uuid(uuid)
+        if server_url:
+            raw_user = api.find(server_url, uuid=uuid)
+            if raw_user and isinstance(raw_user, dict):
+                current_limit = float(raw_user.get('usage_limit_GB', 0) or 0)
+                api.update(server_url, uuid, usage_limit_GB=current_limit + gb_int)
         bot.send_message(
             call.message.chat.id,
-            MESSAGES['VELVET_LTE_BUY_TEXT'].format(gb=gb, price=price),
-            reply_markup=wallet_info_specific_markup(int(price) * 10)
+            MESSAGES['SKV_LTE_ACTIVATED'].format(gb=gb_int, price=price_int),
+            reply_markup=main_menu_keyboard_markup()
         )
 
     elif key == "velvet_buy_sub":
         buy_subscription(call.message)
 
     elif key == "velvet_gift":
-        bot.send_message(call.message.chat.id, MESSAGES['VELVET_GIFTS_STUB'])
+        bot.send_message(
+            call.message.chat.id,
+            MESSAGES['SKV_GIFT_INTRO'],
+            reply_markup=subscription_type_markup()
+        )
 
     elif key == "velvet_bought_gifts":
-        bot.send_message(call.message.chat.id, MESSAGES['VELVET_GIFTS_STUB'])
+        subscriptions = _get_subscriptions_for_user(call.message.chat.id)
+        if not subscriptions:
+            bot.send_message(call.message.chat.id, MESSAGES['VELVET_NO_SUBS'], reply_markup=main_menu_keyboard_markup())
+            return
+        lines = [MESSAGES['SKV_GIFT_BOUGHT_INTRO']]
+        for sub in subscriptions:
+            sub_uuid = sub.get('uuid')
+            sub_id = sub.get('sub_id', '-')
+            remaining = int(sub.get('remaining_day', 0))
+            s_url = _get_server_api_url_by_uuid(sub_uuid)
+            p_base = s_url.replace(API_PATH, '') if s_url else None
+            lnks = utils.sub_links(sub_uuid, url=p_base) if p_base else utils.sub_links(sub_uuid)
+            if lnks:
+                raw_link = lnks.get('sub_link_auto') or lnks.get('sub_link')
+                short_gift = _shorten_url(raw_link) if raw_link else '-'
+            else:
+                short_gift = '-'
+            status_icon = '✅' if sub.get('active') else '⏸️'
+            lines.append(
+                f"{status_icon} #{sub_id} — осталось {remaining} дн.\n🔗 <code>{html.escape(short_gift)}</code>"
+            )
+        bot.send_message(
+            call.message.chat.id,
+            "\n\n".join(lines),
+            reply_markup=main_menu_keyboard_markup(),
+            disable_web_page_preview=True,
+        )
 
     elif key == "velvet_info":
         settings = utils.all_configs_settings()
@@ -1527,7 +2282,8 @@ def callback_query(call: CallbackQuery):
 
     # Back To Plans
     elif key == "back_to_plans":
-        plans = USERS_DB.find_plan(server_id=selected_server_id)
+        selected_type = buy_subscription_type.get(call.message.chat.id, 'individual')
+        plans = _plans_for_buy_type(selected_type)
         if not plans:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                              reply_markup=main_menu_keyboard_markup())
@@ -1537,7 +2293,8 @@ def callback_query(call: CallbackQuery):
 
     # Back To Renewal Plans
     elif key == "back_to_renewal_plans":
-        plans = USERS_DB.find_plan(server_id=selected_server_id)
+        selected_type = buy_subscription_type.get(call.message.chat.id, 'individual')
+        plans = _plans_for_buy_type(selected_type)
         if not plans:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                              reply_markup=main_menu_keyboard_markup())
@@ -1546,29 +2303,13 @@ def callback_query(call: CallbackQuery):
         #                               reply_markup=plans_list_markup(plans, renewal=True,uuid=value))
         update_info_subscription(call.message, value,plans_list_markup(plans, renewal=True,uuid=value))
     
-    elif key == "back_to_servers":
-        servers = USERS_DB.select_servers()
-        server_list = []
-        if not servers:
-            bot.send_message(message.chat.id, MESSAGES['SERVERS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
-            return
-        for server in servers:
-            user_index = 0
-            #if server['status']:
-            users_list = api.select(server['url'] + API_PATH)
-            if users_list:
-                user_index = len(users_list)
-            if server['user_limit'] > user_index:
-                server_list.append([server,True])
-            else:
-                server_list.append([server,False])
-                
-        # bad request telbot api
-        # bot.edit_message_text(chat_id=message.chat.id, message_id=msg_wait.message_id,
-        #                                   text= MESSAGES['SERVERS_LIST'], reply_markup=servers_list_markup(server_list))
-        #bot.delete_message(message.chat.id, msg_wait.message_id)
-        bot.edit_message_text(reply_markup=servers_list_markup(server_list), chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                      text=MESSAGES['SERVERS_LIST'])
+    elif key in ("back_to_servers", "back_to_buy_types"):
+        bot.edit_message_text(
+            text=MESSAGES['BUY_TYPE_SELECT'],
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=subscription_type_markup(),
+        )
         
 
     # Delete Message
@@ -1742,27 +2483,16 @@ def buy_subscription(message: Message):
             bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'])
             return
         wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
-    #msg_wait = bot.send_message(message.chat.id, MESSAGES['WAIT'], reply_markup=main_menu_keyboard_markup())
-    servers = USERS_DB.select_servers()
-    server_list = []
-    if not servers:
-        bot.send_message(message.chat.id, MESSAGES['SERVERS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
+    _ensure_single_server_tariff_plans()
+    server = _get_main_server()
+    if not server:
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=main_menu_keyboard_markup())
         return
-    for server in servers:
-        user_index = 0
-        #if server['status']:
-        users_list = api.select(server['url'] + API_PATH)
-        if users_list:
-            user_index = len(users_list)
-        if server['user_limit'] > user_index:
-            server_list.append([server,True])
-        else:
-            server_list.append([server,False])
-    # bad request telbot api
-    # bot.edit_message_text(chat_id=message.chat.id, message_id=msg_wait.message_id,
-    #                                   text= MESSAGES['SERVERS_LIST'], reply_markup=servers_list_markup(server_list))
-    #bot.delete_message(message.chat.id, msg_wait.message_id)
-    bot.send_message(message.chat.id, MESSAGES['SERVERS_LIST'], reply_markup=servers_list_markup(server_list))
+
+    if not _get_available_servers_with_capacity():
+        bot.send_message(message.chat.id, MESSAGES['SERVER_IS_FULL'], reply_markup=main_menu_keyboard_markup())
+        return
+    bot.send_message(message.chat.id, MESSAGES['BUY_TYPE_SELECT'], reply_markup=subscription_type_markup())
 
 
 # Config To QR Message Handler

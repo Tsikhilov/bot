@@ -4,6 +4,7 @@
 import json
 import logging
 import os
+import re
 from urllib.parse import urlparse
 import requests
 from termcolor import colored
@@ -30,7 +31,7 @@ RECEIPTIONS_LOC = os.path.join(_BASE_DIR, "UserBot", "Receiptions")
 BOT_BACKUP_LOC = os.path.join(_BASE_DIR, "Backup", "Bot")
 
 # Hiddify panel
-API_PATH = "/api/v1"
+API_PATH = "/api/v2"
 SMARTKAMAVPN_BOT_ID = "@SmartKamaVPNbot"
 
 # if directories not exists, create it
@@ -91,34 +92,52 @@ def load_server_url(db):
 
 
 ADMINS_ID, TELEGRAM_TOKEN, CLIENT_TOKEN, PANEL_URL, LANG, PANEL_ADMIN_ID = None, None, None, None, None, None
+HIDDIFY_API_KEY = None
 YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY = None, None
 
 
 def set_config_variables(configs, server_url):
-    if not configs.get('bot_admin_id') and not configs.get('bot_token_admin') and not configs.get('bot_lang') or not server_url:
+    env_admin_ids = os.getenv("SMARTKAMA_ADMIN_IDS")
+    env_admin_token = os.getenv("SMARTKAMA_BOT_TOKEN_ADMIN")
+    env_client_token = os.getenv("SMARTKAMA_BOT_TOKEN_CLIENT")
+    env_lang = os.getenv("SMARTKAMA_LANG")
+    env_panel_url = os.getenv("SMARTKAMA_PANEL_URL")
+
+    raw_admin_ids = configs.get("bot_admin_id") or env_admin_ids
+    telegram_token = configs.get("bot_token_admin") or env_admin_token
+    client_token = configs.get("bot_token_client") or env_client_token
+    panel_url = server_url or env_panel_url
+    lang = configs.get("bot_lang") or env_lang or "RU"
+
+    missing_required = not raw_admin_ids or not telegram_token or not panel_url
+    if missing_required:
         print(colored("Config is not set! , Please run config.py first", "red"))
         raise Exception(f"Config is not set!\nBe in touch with {SMARTKAMAVPN_BOT_ID}")
 
-    global ADMINS_ID, TELEGRAM_TOKEN, PANEL_URL, LANG, PANEL_ADMIN_ID, CLIENT_TOKEN
+    global ADMINS_ID, TELEGRAM_TOKEN, PANEL_URL, LANG, PANEL_ADMIN_ID, CLIENT_TOKEN, HIDDIFY_API_KEY
     global YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY
 
-    json_admin_ids = configs.get("bot_admin_id", "[]")
-    ADMINS_ID = json.loads(json_admin_ids)
-    TELEGRAM_TOKEN = configs.get("bot_token_admin")
-    try:
-        CLIENT_TOKEN = configs.get("bot_token_client")
-    except KeyError:
-        CLIENT_TOKEN = None
+    if isinstance(raw_admin_ids, str) and raw_admin_ids.strip().startswith("["):
+        ADMINS_ID = json.loads(raw_admin_ids)
+    else:
+        ADMINS_ID = [int(x.strip()) for x in str(raw_admin_ids).split(",") if x.strip()]
+
+    TELEGRAM_TOKEN = telegram_token
+    CLIENT_TOKEN = client_token
 
     if CLIENT_TOKEN:
         setup_users_db()
-    PANEL_URL = server_url
-    LANG = configs.get("bot_lang", "RU")
-    # PANEL_ADMIN_ID = ADMIN_DB.find_admins(uuid=urlparse(PANEL_URL).path.split('/')[2])
-    PANEL_ADMIN_ID = urlparse(PANEL_URL).path.split('/')[2]
+    PANEL_URL = panel_url
+    LANG = lang
+    # PANEL URL can contain path slug and API key UUID. Prefer UUID-like segment.
+    path_parts = [p for p in urlparse(PANEL_URL).path.split('/') if p]
+    uuid_like = [p for p in path_parts if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", p)]
+    PANEL_ADMIN_ID = uuid_like[0] if uuid_like else None
+    HIDDIFY_API_KEY = configs.get("hiddify_api_key") or os.getenv("SMARTKAMA_API_KEY") or PANEL_ADMIN_ID
     if not PANEL_ADMIN_ID:
-        print(colored("Admin panel UUID is not valid!", "red"))
-        raise Exception(f"Admin panel UUID is not valid!\nBe in touch with {SMARTKAMAVPN_BOT_ID}")
+        if not HIDDIFY_API_KEY:
+            print(colored("Admin panel UUID/API key is not valid!", "red"))
+            raise Exception(f"Admin panel UUID/API key is not valid!\nBe in touch with {SMARTKAMAVPN_BOT_ID}")
 
     # Load YooKassa settings
     YOOKASSA_SHOP_ID = configs.get("yookassa_shop_id")
@@ -308,9 +327,10 @@ if __name__ == '__main__':
     # close database connection
     db.close()
 
-db = UserDBManager(USERS_DB_LOC)
-db.set_default_configs()
-conf = load_config(db)
-server_url = load_server_url(db)
-set_config_variables(conf, server_url)
-db.close()
+if os.getenv("SMARTKAMA_SKIP_CONFIG_AUTOLOAD") != "1":
+    db = UserDBManager(USERS_DB_LOC)
+    db.set_default_configs()
+    conf = load_config(db)
+    server_url = load_server_url(db)
+    set_config_variables(conf, server_url)
+    db.close()

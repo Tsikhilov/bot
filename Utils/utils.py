@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import subprocess
 import string
 from io import BytesIO
 import re
@@ -23,6 +24,80 @@ import shutil
 session = requests.session()
 # Base panel URL - example: https://panel.example.com
 BASE_URL = urlparse(PANEL_URL).scheme + "://" + urlparse(PANEL_URL).netloc
+_CLIENT_PROXY_PATH_CACHE = None
+
+
+def _discover_client_proxy_path_from_hiddify():
+    app_cfg = "/opt/hiddify-manager/hiddify-panel/app.cfg"
+    if not os.path.exists(app_cfg):
+        return None
+
+    try:
+        with open(app_cfg, "r", encoding="utf-8") as f:
+            text = f.read()
+        m = re.search(r"SQLALCHEMY_DATABASE_URI\s*=\s*'([^']+)'", text)
+        if not m:
+            return None
+
+        uri = m.group(1)
+        m2 = re.search(r"mysql\+mysqldb://([^:]+):([^@]+)@([^/]+)/([^?]+)", uri)
+        if not m2:
+            return None
+
+        db_user, db_pass, db_host, db_name = m2.groups()
+        cmd = [
+            "mysql",
+            "-N",
+            f"-u{db_user}",
+            f"-p{db_pass}",
+            "-h",
+            db_host,
+            "-D",
+            db_name,
+            "-e",
+            "SELECT value FROM str_config WHERE `key`='proxy_path_client' LIMIT 1;",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            return None
+        value = (proc.stdout or "").strip()
+        return value.strip("/") if value else None
+    except Exception:
+        return None
+
+
+def _resolve_client_proxy_path(default_path):
+    global _CLIENT_PROXY_PATH_CACHE
+    if _CLIENT_PROXY_PATH_CACHE:
+        return _CLIENT_PROXY_PATH_CACHE
+
+    try:
+        cfg = USERS_DB.find_str_config(key='hiddify_client_proxy_path')
+        if cfg and cfg[0].get('value'):
+            _CLIENT_PROXY_PATH_CACHE = str(cfg[0]['value']).strip("/")
+            return _CLIENT_PROXY_PATH_CACHE
+    except Exception:
+        pass
+
+    env_path = os.getenv("HIDDIFY_CLIENT_PROXY_PATH")
+    if env_path:
+        _CLIENT_PROXY_PATH_CACHE = env_path.strip("/")
+        return _CLIENT_PROXY_PATH_CACHE
+
+    discovered = _discover_client_proxy_path_from_hiddify()
+    if discovered:
+        _CLIENT_PROXY_PATH_CACHE = discovered
+        try:
+            if USERS_DB.find_str_config(key='hiddify_client_proxy_path'):
+                USERS_DB.edit_str_config('hiddify_client_proxy_path', value=discovered)
+            else:
+                USERS_DB.add_str_config('hiddify_client_proxy_path', discovered)
+        except Exception:
+            pass
+        return _CLIENT_PROXY_PATH_CACHE
+
+    _CLIENT_PROXY_PATH_CACHE = default_path.strip("/") if default_path else default_path
+    return _CLIENT_PROXY_PATH_CACHE
 
 
 # Users directory in panel
@@ -204,16 +279,19 @@ def sub_links(uuid, url= None):
     logging.info(f"Get sub links of user - {uuid}")
     sub = {}
     PANEL_DIR = urlparse(url).path.split('/')
+    panel_path = PANEL_DIR[1] if len(PANEL_DIR) > 1 else ''
+    client_proxy_path = _resolve_client_proxy_path(panel_path)
     # Clash open app: clash://install-config?url=
     # Hidden open app: clashmeta://install-config?url=
-    sub['clash_configs'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/clash/all.yml"
-    sub['hiddify_configs'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/clash/meta/all.yml"
-    sub['sub_link'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/all.txt"
-    sub['sub_link_b64'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/all.txt?base64=True"
+    sub['clash_configs'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/clash/all.yml"
+    sub['hiddify_configs'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/clash/meta/all.yml"
+    sub['sub_link'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/all.txt"
+    sub['sub_link_b64'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/all.txt?base64=True"
     # Add in v8.0 Hiddify
-    sub['sub_link_auto'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/sub/?asn=unknown"
-    sub['sing_box_full'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/full-singbox.json?asn=unknown"
-    sub['sing_box'] = f"{BASE_URL}/{PANEL_DIR[1]}/{uuid}/singbox.json?asn=unknown"
+    sub['sub_link_auto'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/sub/?asn=unknown"
+    sub['home_link'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/?home=true&lang=ru"
+    sub['sing_box_full'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/full-singbox.json?asn=unknown"
+    sub['sing_box'] = f"{BASE_URL}/{client_proxy_path}/{uuid}/singbox.json?asn=unknown"
     return sub
 
 
