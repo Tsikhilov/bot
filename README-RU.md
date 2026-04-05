@@ -53,14 +53,146 @@ python3 smartkamavpnTelegramBot.py
 
 ## Прод-проверка API (рекомендуется)
 
-Перед перезапуском сервиса можно выполнить end-to-end проверку API панели:
+Перед перезапуском сервиса проверка теперь выбирается по активному провайдеру панели:
+
+- `panel_provider=3xui` -> `scripts/selfcheck_api.py`
+- `panel_provider=marzban` -> `scripts/selfcheck_marzban_api.py`
+
+Ручной запуск:
 
 ```bash
 python3 scripts/selfcheck_api.py
+python3 scripts/selfcheck_marzban_api.py
 ```
 
-Скрипт автоматически проверяет `create -> read -> delete` тестового пользователя через `/api/v2`.
-При успехе выводит `SELF_CHECK_OK`.
+Для Marzban доступен опциональный write-smoke (создание/чтение/обновление/сброс/удаление тестового пользователя):
+
+```bash
+MARZBAN_SELFCHECK_WRITE=1 python3 scripts/selfcheck_marzban_api.py
+```
+
+## Переключение провайдера панели (под ключ)
+
+На сервере можно безопасно посмотреть текущий провайдер и Marzban-параметры:
+
+```bash
+python3 scripts/server_set_panel_provider.py --show
+```
+
+Переключить провайдер:
+
+```bash
+python3 scripts/server_set_panel_provider.py --provider 3xui
+python3 scripts/server_set_panel_provider.py --provider marzban --marzban-panel-url https://example.com
+```
+
+`--provider marzban` сохраняет уже существующие Marzban-поля, если новые значения явно не переданы.
+Если в БД поля пустые, скрипт попробует взять `MARZBAN_*` из окружения.
+
+Через PowerShell-инструменты деплоя:
+
+```powershell
+. .\scripts\prod_tools.ps1
+Get-ProdPanelProvider
+Set-ProdPanelProvider -Provider marzban -MarzbanPanelUrl "https://example.com"
+
+# Полный контур: deploy -> switch provider -> selfchecks -> guard -> autotune
+Invoke-ProdMarzbanTurnkey -MarzbanPanelUrl "https://example.com" -SubId "01dcf49b"
+```
+
+## Guard-скрипт для прода (диагностика + автофикс + smoke)
+
+Для проверки подписок, shortlink, Reality-параметров и сервисов в один шаг:
+
+```bash
+python3 scripts/server_ops_guard.py --mode all
+```
+
+Отдельные режимы:
+
+```bash
+# Только диагностика
+python3 scripts/server_ops_guard.py --mode diagnose
+
+# Автоисправление типовых проблем + повторная диагностика
+python3 scripts/server_ops_guard.py --mode autofix
+
+# Короткий smoke-тест /sub и /s
+python3 scripts/server_ops_guard.py --mode smoke
+```
+
+Если нужно явно проверить конкретную подписку:
+
+```bash
+python3 scripts/server_ops_guard.py --mode all --sub-id ec0a9260
+```
+
+По умолчанию скрипт использует:
+- x-ui DB: `/etc/x-ui/x-ui.db`
+- bot DB: `/opt/SmartKamaVPN/Database/smartkamavpn.db`
+- домен подписок: `sub.smartkama.ru`
+
+## Снижение пинга протоколов
+
+Для уменьшения задержек на проде используйте связку из двух шагов:
+
+```bash
+# 1) Тюнинг TCP стека (fq + bbr + tcp_fastopen)
+python3 scripts/server_tune_network.py
+
+# 2) Применение latency-aware профилей (выбор самых быстрых Reality SNI)
+python3 scripts/server_apply_nl_profiles.py
+```
+
+После применения рекомендуется проверить целостность контура:
+
+```bash
+python3 scripts/server_ops_guard.py --mode all
+```
+
+## One-click автотюнинг прода (WARP + профили + guard)
+
+Запуск полного безопасного автотюнинга:
+
+```bash
+python3 scripts/server_autotune_stack.py --full
+```
+
+Что делает `--full`:
+- применяет TCP тюнинг (`server_tune_network.py`)
+- применяет latency-aware профили (`server_apply_nl_profiles.py`)
+- обновляет `xrayTemplateConfig` для селективного WARP-роутинга по проблемным зарубежным доменам
+- отключает `tgBotEnable` при конфликте polling (если токен панели совпадает с токеном админ-бота)
+- перезапускает x-ui при изменениях
+- запускает guard (`server_ops_guard.py --mode all`)
+
+Важно:
+- в этой сборке x-ui `balancerTag`/`balancers` из шаблона не материализуются в runtime-конфиг и могут уронить Xray.
+- поэтому используется только безопасный селективный `outboundTag=warp`.
+
+## Планировщик автотюнинга (systemd timer)
+
+Установить периодический автотюнинг 2 раза в сутки:
+
+```bash
+python3 scripts/server_install_autotune_timer.py --on-calendar "*-*-* 04,16:00:00"
+```
+
+Проверить таймер:
+
+```bash
+systemctl status smartkama-autotune.timer --no-pager
+systemctl list-timers smartkama-autotune.timer --no-pager
+```
+
+## Telegram панели (ограничение)
+
+Если включить Telegram-бот панели (`tgBotEnable=true`) и использовать тот же токен, что у основного админ-бота SmartKama,
+возникнет конфликт `getUpdates 409` (два poller на одном токене).
+
+Рекомендуется:
+- либо держать `tgBotEnable=false`,
+- либо выдать панели отдельный Telegram bot token.
 
 ## Нативная русификация Hiddify (без прокси-версии страницы)
 

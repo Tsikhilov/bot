@@ -1,13 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SmartKamaVPN</title>
-    <meta
-      name="description"
-      content="SmartKamaVPN tools: IP lookup, DNS lookup, domain profile, and utility generators."
-    />
+    <meta name="description" content="SmartKamaVPN: диагностика сети, DNS, домены и быстрые утилиты." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,25 +15,65 @@
   </head>
   <body>
     <div class="noise"></div>
-    <header class="hero">
+    <header class="hero reveal">
       <nav class="topbar">
         <div class="brand">SmartKamaVPN</div>
+        <div class="status-pill">online tools</div>
       </nav>
 
       <div class="hero-content">
         <p class="kicker">Network Diagnostics</p>
-        <h1>SmartKamaVPN Radar</h1>
+        <h1>SmartKamaVPN Control Deck</h1>
         <p class="lead">
-          Fast tools for IP intelligence, DNS records, and domain diagnostics.
-          Built for users who need clear answers in seconds.
+          Быстрые инструменты для проверки IP, DNS и доменов.
+          Понятный результат за секунды для пользователей и админов.
         </p>
+        <div class="hero-badges">
+          <span>IP Intel</span>
+          <span>DNS Resolve</span>
+          <span>Domain RDAP</span>
+          <span>Utility Kit</span>
+        </div>
+      </div>
+
+      <div class="hero-art">
+        <img
+          src="https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1400&q=80"
+          alt="Network operations"
+          loading="lazy"
+        />
       </div>
     </header>
+
+    <section class="visual-strip reveal">
+      <article class="visual-card">
+        <img
+          src="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=900&q=80"
+          alt="Global network"
+          loading="lazy"
+        />
+        <div class="visual-copy">
+          <h3>Global Reach</h3>
+          <p>Оценивайте сеть и доступность ресурсов без лишней ручной рутины.</p>
+        </div>
+      </article>
+      <article class="visual-card">
+        <img
+          src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=900&q=80"
+          alt="Server security"
+          loading="lazy"
+        />
+        <div class="visual-copy">
+          <h3>Secure Pipeline</h3>
+          <p>Инструменты для ежедневной проверки и быстрой диагностики VPN-окружения.</p>
+        </div>
+      </article>
+    </section>
 
     <main class="grid">
       <section class="card card-large reveal" id="my-ip-card">
         <h2>Your Public IP</h2>
-        <p class="muted">Auto-detected from your current connection.</p>
+        <p class="muted">Автоматическое определение из вашего текущего подключения.</p>
         <div class="ip-value" id="my-ip">Loading...</div>
         <div class="meta-grid" id="my-ip-meta"></div>
         <button class="btn" id="refresh-ip" type="button">Refresh</button>
@@ -92,12 +129,18 @@
             <input id="password-length" type="number" min="8" max="64" value="18" />
             <button class="btn" id="generate-password" type="button">Generate</button>
           </div>
-          <code id="password-output">-</code>
+          <div class="output-row">
+            <code id="password-output">-</code>
+            <button class="btn ghost" id="copy-password" type="button">Copy</button>
+          </div>
         </div>
 
         <div class="utility-block">
           <h3>UUID v4</h3>
-          <button class="btn" id="generate-uuid" type="button">Generate UUID</button>
+          <div class="output-row">
+            <button class="btn" id="generate-uuid" type="button">Generate UUID</button>
+            <button class="btn ghost" id="copy-uuid" type="button">Copy</button>
+          </div>
           <code id="uuid-output">-</code>
         </div>
       </section>
