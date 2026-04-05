@@ -511,6 +511,72 @@ def proxy_home_page(target_url):
     return page_bytes
 
 
+# ---------------------------------------------------------------------------
+# Marzban short sub_id → real subscription token resolver
+# ---------------------------------------------------------------------------
+_MARZBAN_TOKEN_CACHE = {"token": None, "expires": 0}
+
+
+def _marzban_api_token():
+    """Get (cached) Marzban admin JWT token."""
+    import time
+    now = time.time()
+    if _MARZBAN_TOKEN_CACHE["token"] and now < _MARZBAN_TOKEN_CACHE["expires"]:
+        return _MARZBAN_TOKEN_CACHE["token"]
+    panel_url = os.getenv("MARZBAN_PANEL_URL", "http://127.0.0.1:8000").rstrip("/")
+    username = os.getenv("MARZBAN_USERNAME", "")
+    password = os.getenv("MARZBAN_PASSWORD", "")
+    if not username or not password:
+        return None
+    try:
+        data = urlencode({"username": username, "password": password}).encode()
+        req = urllib.request.Request(
+            f"{panel_url}/api/admin/token",
+            data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read())
+            tok = body.get("access_token")
+            if tok:
+                _MARZBAN_TOKEN_CACHE["token"] = tok
+                _MARZBAN_TOKEN_CACHE["expires"] = now + 3500
+                return tok
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_marzban_sub_path(short_id):
+    """Resolve a short bot sub_id to the actual Marzban /sub/<token> path.
+
+    Searches Marzban users for one whose username ends with the short_id
+    and returns the subscription token extracted from subscription_url.
+    """
+    token = _marzban_api_token()
+    if not token:
+        return None
+    panel_url = os.getenv("MARZBAN_PANEL_URL", "http://127.0.0.1:8000").rstrip("/")
+    try:
+        req = urllib.request.Request(
+            f"{panel_url}/api/users?search={short_id}&limit=5",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            for user in data.get("users", []):
+                sub_url = user.get("subscription_url", "")
+                if "/sub/" in sub_url:
+                    real_token = sub_url.split("/sub/")[-1].split("?")[0]
+                    if real_token and real_token != short_id:
+                        return f"/sub/{real_token}"
+    except Exception:
+        pass
+    return None
+
+
 def proxy_subscription_source(target_url):
     try:
         parsed = urlparse(target_url)
@@ -1462,6 +1528,16 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.query:
                 target = f"{target}?{parsed.query}"
             payload, content_type, upstream_headers = proxy_subscription_source(target)
+            # Fallback: resolve short bot sub_id → real Marzban token
+            if payload is None:
+                sub_segment = path.split("/sub/", 1)[1].strip("/")
+                if sub_segment and len(sub_segment) <= 32:
+                    resolved = _resolve_marzban_sub_path(sub_segment)
+                    if resolved:
+                        fallback_target = f"http://127.0.0.1:8000{resolved}"
+                        if parsed.query:
+                            fallback_target = f"{fallback_target}?{parsed.query}"
+                        payload, content_type, upstream_headers = proxy_subscription_source(fallback_target)
             if payload is not None:
                 payload = _normalize_subscription_payload(target, payload, operator=operator, export_host=export_host)
                 self.send_response(200)
