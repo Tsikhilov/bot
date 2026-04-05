@@ -1,7 +1,9 @@
 import json
+import os
 import socket
 import sqlite3
 import ssl
+import subprocess
 import time
 from typing import Any
 
@@ -48,6 +50,15 @@ FALLBACK_FAST_SNI = [
 ]
 
 MAX_ACCEPTABLE_RTT_MS = 1200.0
+
+# --- Marzban-specific constants ---
+MARZBAN_XRAY_CONFIG = "/var/lib/marzban/xray_config.json"
+MARZBAN_REALITY_SNI_CANDIDATES: dict[str, list[str]] = {
+    "nl-reality-1": ["vk.com", "rambler.ru", "yandex.ru", "ya.ru", "yastatic.net"],
+    "nl-reality-2": ["ok.ru", "dzen.ru", "vk.ru", "mail.ru"],
+    "nl-reality-3": ["gosuslugi.ru", "avito.ru", "kinopoisk.ru"],
+    "nl-reality-4": ["mos.ru", "sberbank.ru", "wildberries.ru", "ozon.ru"],
+}
 
 
 def _j(obj: Any, default: Any) -> Any:
@@ -410,7 +421,119 @@ def _set_db_order() -> None:
     print("db_order_set", order_csv, "fp", "chrome")
 
 
+def _detect_provider() -> str:
+    try:
+        conn = sqlite3.connect(DB)
+        row = conn.execute(
+            "SELECT value FROM str_config WHERE key='panel_provider'"
+        ).fetchone()
+        conn.close()
+        return (row[0] or "3xui").strip() if row else "3xui"
+    except Exception:
+        return "3xui"
+
+
+def _pick_marzban_reality_sni() -> dict[str, list[str]]:
+    picked: dict[str, list[str]] = {}
+    for tag, candidates in MARZBAN_REALITY_SNI_CANDIDATES.items():
+        ranked: list[tuple[str, float]] = []
+        for host in candidates:
+            rtt = _probe_tls_rtt_ms(host)
+            if rtt is not None:
+                ranked.append((host, rtt))
+        ranked.sort(key=lambda x: x[1])
+        fastest_hosts = [host for host, ms in ranked if ms <= MAX_ACCEPTABLE_RTT_MS]
+        if len(fastest_hosts) < 2:
+            for host in FALLBACK_FAST_SNI:
+                if host in fastest_hosts:
+                    continue
+                rtt = _probe_tls_rtt_ms(host, attempts=2)
+                if rtt is None or rtt > MAX_ACCEPTABLE_RTT_MS:
+                    continue
+                fastest_hosts.append(host)
+                ranked.append((host, rtt))
+                if len(fastest_hosts) >= 2:
+                    break
+        selected = (
+            fastest_hosts
+            or [h for h in candidates if _probe_tls_443(h)]
+            or candidates
+        )[:2]
+        if len(selected) == 1:
+            selected = [selected[0], selected[0]]
+        ranked_unique = sorted(
+            {h: ms for h, ms in ranked}.items(), key=lambda x: x[1]
+        )
+        picked[tag] = selected
+        print(
+            "sni_probe", tag, "ranked",
+            [(h, round(ms, 1)) for h, ms in ranked_unique],
+            "selected", selected,
+        )
+    return picked
+
+
+def main_marzban() -> None:
+    """Marzban mode: probe SNI and update Reality settings in xray_config.json."""
+    if not os.path.isfile(MARZBAN_XRAY_CONFIG):
+        print("marzban_config_not_found", MARZBAN_XRAY_CONFIG)
+        return
+
+    sni_map = _pick_marzban_reality_sni()
+
+    with open(MARZBAN_XRAY_CONFIG, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    changed = False
+    for inbound in config.get("inbounds", []):
+        tag = inbound.get("tag", "")
+        if tag not in MARZBAN_REALITY_SNI_CANDIDATES:
+            continue
+        stream = inbound.get("streamSettings", {})
+        if stream.get("security") != "reality":
+            continue
+        reality = stream.get("realitySettings", {})
+        selected = sni_map.get(tag, [])
+        if not selected:
+            continue
+        if reality.get("serverNames") != selected:
+            reality["serverNames"] = selected
+            changed = True
+        target_dest = f"{selected[0]}:443"
+        if reality.get("dest") != target_dest:
+            reality["dest"] = target_dest
+            changed = True
+
+    if changed:
+        backup = MARZBAN_XRAY_CONFIG + f".bak.{int(time.time())}"
+        with open(MARZBAN_XRAY_CONFIG, "r", encoding="utf-8") as src:
+            with open(backup, "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+        with open(MARZBAN_XRAY_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        print("marzban_config_updated backup", backup)
+        subprocess.run(["marzban", "restart", "-n"], check=True, timeout=120)
+        print("marzban_restarted")
+    else:
+        print("marzban_config_unchanged")
+
+    # Final summary.
+    for inbound in config.get("inbounds", []):
+        tag = inbound.get("tag", "")
+        if tag not in MARZBAN_REALITY_SNI_CANDIDATES:
+            continue
+        stream = inbound.get("streamSettings", {})
+        reality = stream.get("realitySettings", {})
+        sni = (reality.get("serverNames") or [""])[0]
+        print("final", tag, inbound.get("port"), "sni", sni)
+
+
 def main() -> None:
+    provider = _detect_provider()
+    if provider == "marzban":
+        main_marzban()
+        return
+
     sess = requests.Session()
     sess.verify = False
     login = sess.post(BASE + "/login", data={"username": USER, "password": PASS}, timeout=20).json()

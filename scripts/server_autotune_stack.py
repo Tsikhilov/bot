@@ -117,9 +117,6 @@ class AutoTuner:
         self.changed = True
 
     def apply_inbound_profiles(self) -> None:
-        if self.provider == "marzban":
-            self.log("skip inbound profiles: provider=marzban")
-            return
         script = Path(self.args.base_dir) / "scripts" / "server_apply_nl_profiles.py"
         if not script.exists():
             self.log("skip profile apply: script not found", script)
