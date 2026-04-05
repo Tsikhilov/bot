@@ -12,6 +12,7 @@ def main_menu_keyboard_markup():
     markup.add(KeyboardButton(KEY_MARKUP['SUBSCRIPTION_STATUS']))
     markup.add(KeyboardButton(KEY_MARKUP['LINK_SUBSCRIPTION']), KeyboardButton(KEY_MARKUP['BUY_SUBSCRIPTION']))
     markup.add(KeyboardButton(KEY_MARKUP['FREE_TEST']), KeyboardButton(KEY_MARKUP['WALLET']))
+    markup.add(KeyboardButton(KEY_MARKUP['GIFT_VPN']), KeyboardButton(KEY_MARKUP['MTPROMO']))
     # KeyboardButton(KEY_MARKUP['TO_QR']),
     settings = all_configs_settings()
     if settings['msg_faq']:
@@ -105,6 +106,7 @@ def confirm_buy_plan_markup(plan_id, renewal=False,uuid=None):
         markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_renewal_plans:{uuid}"))
     else:
         markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_plans:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -131,15 +133,17 @@ def plans_list_markup(plans, renewal=False,uuid=None):
         keys.append(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_user_panel:{uuid}"))
     else:
         keys.append(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_buy_types:None"))
+    keys.append(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     markup.add(*keys)
     return markup
 
 
 def subscription_type_markup():
     markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(InlineKeyboardButton("👤 Индивидуальный (2 устройства)", callback_data="buy_type_selected:individual"))
-    markup.add(InlineKeyboardButton("👨‍👩‍👧‍👦 Семейный (5 устройств)", callback_data="buy_type_selected:family"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="del_msg:None"))
+    markup.add(InlineKeyboardButton("👤 Индивидуальный: 2 телефона + 2 ПК/планшета", callback_data="buy_type_selected:individual"))
+    markup.add(InlineKeyboardButton("👨‍👩‍👧‍👦 Семейный: 5 телефонов + 3 ПК/планшета", callback_data="buy_type_selected:family"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="smartkamavpn_vpn_menu:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -204,14 +208,14 @@ def wallet_info_markup():
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
     markup.add(
-        InlineKeyboardButton(KEY_MARKUP['INCREASE_WALLET_BALANCE'], callback_data=f"increase_wallet_balance:wallet"))
+        InlineKeyboardButton(KEY_MARKUP['INCREASE_WALLET_BALANCE'], callback_data="select_payment_method:None"))
     return markup
 
 def wallet_info_specific_markup(amount):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
     markup.add(
-        InlineKeyboardButton(KEY_MARKUP['INCREASE_WALLET_BALANCE'], callback_data=f"increase_wallet_balance_specific:{amount}"))
+        InlineKeyboardButton(KEY_MARKUP['INCREASE_WALLET_BALANCE'], callback_data=f"select_payment_method_specific:{amount}"))
     return markup
 
 def force_join_channel_markup(channel_id):
@@ -243,12 +247,31 @@ def users_bot_management_settings_panel_manual_markup():
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"del_msg:None"))
     return markup
 
-def payment_method_selection_markup():
-    """Markup for selecting payment method (Card or YooKassa)"""
+def payment_method_selection_markup(amount=None):
+    """Markup for selecting payment method (Card, YooKassa, Pally)."""
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_CARD'], callback_data=f"increase_wallet_balance:wallet"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_YOOKASSA'], callback_data=f"yookassa_payment:None"))
+
+    settings = all_configs_settings()
+    amount_rub = int(int(amount) / 10) if amount else None
+    card_callback = f"increase_wallet_balance_specific:{amount}" if amount else "increase_wallet_balance:wallet"
+    yookassa_callback = f"yookassa_payment:{amount_rub}" if amount_rub else "yookassa_payment:None"
+    pally_callback = f"pally_payment:{amount_rub}" if amount_rub else "pally_payment:None"
+
+    added = 0
+    if settings.get('payment_method_card_enabled', 1):
+        markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_CARD'], callback_data=card_callback))
+        added += 1
+    if settings.get('payment_method_yookassa_enabled', 1):
+        markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_YOOKASSA'], callback_data=yookassa_callback))
+        added += 1
+    if settings.get('payment_method_pally_enabled', 0):
+        markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_PALLY'], callback_data=pally_callback))
+        added += 1
+
+    if added == 0:
+        markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_CARD'], callback_data=card_callback))
+
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"del_msg:None"))
     return markup
 
@@ -267,18 +290,45 @@ def velvet_vpn_subscriptions_markup(subscriptions):
             if not title:
                 title = f"Подписка {str(uuid)[:8]}" if uuid else "Подписка"
             cb_val = uuid if uuid else "None"
-            markup.add(InlineKeyboardButton(f"🔹 {title}", callback_data=f"velvet_sub_open:{cb_val}"))
-    markup.add(InlineKeyboardButton("🔙 В меню", callback_data="del_msg:None"))
+            markup.add(InlineKeyboardButton(f"🔹 {title}", callback_data=f"smartkamavpn_sub_open:{cb_val}"))
+
+    markup.add(InlineKeyboardButton("⚡ Приобрести новую", callback_data="smartkamavpn_buy_sub:None"))
+    markup.add(InlineKeyboardButton("🔄 Продлить старую", callback_data="smartkamavpn_renew_menu:None"))
+    markup.add(InlineKeyboardButton("🎁 Подарки", callback_data="smartkamavpn_gift:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
+    return markup
+
+
+def velvet_renew_subscriptions_markup(subscriptions):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    if subscriptions:
+        for sub in subscriptions:
+            uuid = sub.get('uuid') if isinstance(sub, dict) else None
+            if not uuid:
+                continue
+            title = sub.get('name') if isinstance(sub, dict) else None
+            if not title:
+                title = sub.get('title') if isinstance(sub, dict) else None
+            if not title:
+                title = f"Подписка {str(uuid)[:8]}" if uuid else "Подписка"
+            cb_val = uuid if uuid else "None"
+            markup.add(InlineKeyboardButton(f"🔄 {title}", callback_data=f"renewal_subscription:{cb_val}"))
+    markup.add(InlineKeyboardButton("🔙 К подпискам", callback_data="smartkamavpn_vpn_menu:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
 def velvet_subscription_actions_markup(uuid, sub_id='-'):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    markup.add(InlineKeyboardButton("⚙️ Настройка", callback_data=f"velvet_setup:{uuid}"))
-    markup.add(InlineKeyboardButton(f"📱 Мои устройства (#{sub_id})", callback_data=f"velvet_devices:{uuid}:1"))
-    markup.add(InlineKeyboardButton("🌐 Подписка", callback_data=f"velvet_params:{uuid}"))
-    markup.add(InlineKeyboardButton("🔙 К подпискам", callback_data="velvet_vpn_menu:None"))
+    markup.add(InlineKeyboardButton("⚙️ Настройка", callback_data=f"smartkamavpn_setup:{uuid}"))
+    markup.add(InlineKeyboardButton("📱 Мои устройства", callback_data=f"smartkamavpn_devices:{uuid}:1"))
+    markup.add(InlineKeyboardButton("🔗 Подписка", callback_data=f"smartkamavpn_params:{uuid}"))
+    markup.add(InlineKeyboardButton("⚡ Приобрести новую", callback_data="smartkamavpn_buy_sub:None"))
+    markup.add(InlineKeyboardButton("🔄 Продлить эту подписку", callback_data=f"renewal_subscription:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 К подпискам", callback_data="smartkamavpn_vpn_menu:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -286,11 +336,12 @@ def velvet_setup_markup(uuid):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
     markup.add(InlineKeyboardButton("📱 Показать QR-код подписки", callback_data=f"conf_sub_auto:{uuid}"))
-    markup.add(InlineKeyboardButton("📘 Инструкция", callback_data=f"velvet_manual:{uuid}"))
-    markup.add(InlineKeyboardButton("🆘 Не получается подключить", callback_data=f"velvet_support:{uuid}"))
-    markup.add(InlineKeyboardButton("📶 LTE пакеты", callback_data=f"velvet_lte:{uuid}"))
-    markup.add(InlineKeyboardButton("✅ Готово", callback_data=f"velvet_done:{uuid}"))
-    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("📘 Инструкция", callback_data=f"smartkamavpn_manual:{uuid}"))
+    markup.add(InlineKeyboardButton("🆘 Не получается подключить", callback_data=f"smartkamavpn_support:{uuid}"))
+    markup.add(InlineKeyboardButton("📶 LTE пакеты", callback_data=f"smartkamavpn_lte:{uuid}"))
+    markup.add(InlineKeyboardButton("✅ Готово", callback_data=f"smartkamavpn_done:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"smartkamavpn_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -301,28 +352,30 @@ def velvet_devices_markup(uuid, page, total_pages, item_indexes=None):
     prev_page = current_page - 1 if current_page > 1 else 1
     next_page = current_page + 1 if current_page < total_pages else total_pages
     markup.add(
-        InlineKeyboardButton("⬅️", callback_data=f"velvet_devices:{uuid}:{prev_page}"),
-        InlineKeyboardButton(f"{current_page}/{total_pages}", callback_data=f"velvet_devices:{uuid}:{current_page}"),
-        InlineKeyboardButton("➡️", callback_data=f"velvet_devices:{uuid}:{next_page}")
+        InlineKeyboardButton("⬅️", callback_data=f"smartkamavpn_devices:{uuid}:{prev_page}"),
+        InlineKeyboardButton(f"{current_page}/{total_pages}", callback_data=f"smartkamavpn_devices:{uuid}:{current_page}"),
+        InlineKeyboardButton("➡️", callback_data=f"smartkamavpn_devices:{uuid}:{next_page}")
     )
     if item_indexes:
         for idx in item_indexes:
             pos = int(idx) + 1
             markup.add(
-                InlineKeyboardButton(f"🔒 Блок #{pos}", callback_data=f"velvet_dev_block:{uuid}|{idx}"),
-                InlineKeyboardButton(f"🗑 Удалить #{pos}", callback_data=f"velvet_dev_del:{uuid}|{idx}"),
+                InlineKeyboardButton(f"🔒 Блок #{pos}", callback_data=f"smartkamavpn_dev_block:{uuid}|{idx}"),
+                InlineKeyboardButton(f"🗑 Удалить #{pos}", callback_data=f"smartkamavpn_dev_del:{uuid}|{idx}"),
             )
-    markup.add(InlineKeyboardButton("🔙 К подписке", callback_data=f"velvet_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 К подписке", callback_data=f"smartkamavpn_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
 def velvet_lte_packages_markup(uuid):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    markup.add(InlineKeyboardButton("1 ГБ - 99 ₽", callback_data=f"velvet_lte_buy:{uuid}:1:99"))
-    markup.add(InlineKeyboardButton("5 ГБ - 399 ₽", callback_data=f"velvet_lte_buy:{uuid}:5:399"))
-    markup.add(InlineKeyboardButton("10 ГБ - 699 ₽", callback_data=f"velvet_lte_buy:{uuid}:10:699"))
-    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_setup:{uuid}"))
+    markup.add(InlineKeyboardButton("1 ГБ - 99 ₽", callback_data=f"smartkamavpn_lte_buy:{uuid}:1:99"))
+    markup.add(InlineKeyboardButton("5 ГБ - 399 ₽", callback_data=f"smartkamavpn_lte_buy:{uuid}:5:399"))
+    markup.add(InlineKeyboardButton("10 ГБ - 699 ₽", callback_data=f"smartkamavpn_lte_buy:{uuid}:10:699"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"smartkamavpn_setup:{uuid}"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -335,11 +388,21 @@ def velvet_referral_markup(ref_link):
 
 def velvet_params_markup(uuid, home_web_url=None):
     markup = InlineKeyboardMarkup()
-    markup.row_width = 1
-    markup.add(InlineKeyboardButton("🔗 Подписка", callback_data=f"conf_sub_auto:{uuid}"))
+    markup.row_width = 2
+    markup.add(
+        InlineKeyboardButton("📱 Happ / V2RayTun", callback_data=f"smartkamavpn_conf_happ:{uuid}"),
+        InlineKeyboardButton("🟠 Hiddify", callback_data=f"conf_hiddify:{uuid}"),
+    )
+    markup.add(
+        InlineKeyboardButton("🥷 Clash", callback_data=f"conf_clash:{uuid}"),
+        InlineKeyboardButton("📦 Sing-box", callback_data=f"conf_sub_sing_box:{uuid}"),
+    )
+    markup.add(InlineKeyboardButton("⚡ Авто-подключение", callback_data=f"conf_sub_auto:{uuid}"))
+    markup.add(InlineKeyboardButton("🔗 Универсальная ссылка", callback_data=f"conf_sub_url:{uuid}"))
     if home_web_url:
         markup.add(InlineKeyboardButton("🌐 Открыть сайт подписки", url=home_web_url))
-    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"velvet_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("🔙 Назад", callback_data=f"smartkamavpn_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup
 
 
@@ -355,9 +418,38 @@ def velvet_help_markup(support_username=None):
 def velvet_about_markup():
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    markup.add(InlineKeyboardButton("📝 Отзывы", callback_data="velvet_info:reviews"))
-    markup.add(InlineKeyboardButton("🔐 Политика", callback_data="velvet_info:privacy"))
-    markup.add(InlineKeyboardButton("📜 Соглашение", callback_data="velvet_info:agreement"))
-    markup.add(InlineKeyboardButton("🗂 Персональные данные", callback_data="velvet_info:pd"))
-    markup.add(InlineKeyboardButton("🛡 Поддержка", callback_data="velvet_info:support"))
+    markup.add(InlineKeyboardButton("📝 Отзывы", callback_data="smartkamavpn_info:reviews"))
+    markup.add(InlineKeyboardButton("🔐 Политика", callback_data="smartkamavpn_info:privacy"))
+    markup.add(InlineKeyboardButton("📜 Соглашение", callback_data="smartkamavpn_info:agreement"))
+    markup.add(InlineKeyboardButton("🗂 Персональные данные", callback_data="smartkamavpn_info:pd"))
+    markup.add(InlineKeyboardButton("🛡 Поддержка", callback_data="smartkamavpn_info:support"))
+    return markup
+
+
+def smartkamavpn_gift_menu_markup():
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton(KEY_MARKUP['GIFT_PROMO_CODE'], callback_data="smartkamavpn_gift_promo:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['GIFT_SUBSCRIPTION_CLOSE'], callback_data="smartkamavpn_gift_subscription:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BOUGHT_GIFTS'], callback_data="smartkamavpn_bought_gifts:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="smartkamavpn_vpn_menu:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
+    return markup
+
+
+def smartkamavpn_gift_subscription_markup(subscriptions):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    for sub in subscriptions:
+        uuid = sub.get('uuid') if isinstance(sub, dict) else None
+        if not uuid:
+            continue
+        title = sub.get('name') if isinstance(sub, dict) else None
+        if not title:
+            title = sub.get('title') if isinstance(sub, dict) else None
+        if not title:
+            title = f"Подписка {str(uuid)[:8]}"
+        markup.add(InlineKeyboardButton(f"🎁 {title}", callback_data=f"smartkamavpn_gift_sub_pick:{uuid}"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="smartkamavpn_gift:None"))
+    markup.add(InlineKeyboardButton("🏠 В титульное меню", callback_data="smartkamavpn_title_menu:None"))
     return markup

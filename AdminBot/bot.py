@@ -56,6 +56,32 @@ def yookassa_set_secret_key(message: Message):
         bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'], reply_markup=markups.main_menu_keyboard_markup())
 
 
+def _set_bool_config(key, value):
+    USERS_DB.add_bool_config(key, value)
+    return USERS_DB.edit_bool_config(key, value=value)
+
+
+def _set_str_config(key, value):
+    USERS_DB.add_str_config(key, value)
+    return USERS_DB.edit_str_config(key, value=value)
+
+
+def pally_set_url(message: Message):
+    if message.text == KEY_MARKUP['CANCEL']:
+        bot.send_message(message.chat.id, MESSAGES['CANCELED'], reply_markup=markups.main_menu_keyboard_markup())
+        return
+
+    url = (message.text or '').strip()
+    if not url:
+        bot.send_message(message.chat.id, MESSAGES['ERROR_INVALID_COMMAND'], reply_markup=markups.main_menu_keyboard_markup())
+        return
+
+    if _set_str_config("pally_payment_url", url):
+        bot.send_message(message.chat.id, MESSAGES['PALLY_URL_SAVED'], reply_markup=markups.main_menu_keyboard_markup())
+    else:
+        bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'], reply_markup=markups.main_menu_keyboard_markup())
+
+
 
 # Initialize Bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode="HTML")
@@ -513,9 +539,13 @@ def search_bot_user_payment(message: Message):
     user_data = user_data[0]
     
     msg = templates.bot_payment_info_template(payment,user_data)
-    photo_path = os.path.join(os.getcwd(), 'UserBot', 'Receiptions', payment['payment_image'])
-    bot.send_photo(message.chat.id, photo=open(photo_path, 'rb'),
-                caption=msg, reply_markup=markups.change_status_payment_by_admin(payment['id']))
+    payment_image = payment.get('payment_image') or ''
+    photo_path = os.path.join(os.getcwd(), 'UserBot', 'Receiptions', payment_image)
+    if payment_image and os.path.isfile(photo_path):
+        bot.send_photo(message.chat.id, photo=open(photo_path, 'rb'),
+                    caption=msg, reply_markup=markups.change_status_payment_by_admin(payment['id']))
+    else:
+        bot.send_message(message.chat.id, msg, reply_markup=markups.change_status_payment_by_admin(payment['id']))
 
 
 # ----------------------------------- Users Bot Management Area -----------------------------------
@@ -1210,6 +1240,15 @@ def callback_query(call: CallbackQuery):
     #Order, Payment, Gift
     global item_mode
     global selected_telegram_id
+
+    if key == "admin_title_menu":
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except telebot.apihelper.ApiTelegramException:
+            pass
+        bot.send_message(call.message.chat.id, MESSAGES['WELCOME'], reply_markup=markups.main_menu_keyboard_markup())
+        return
+
     # ----------------------------------- Users List Area Callbacks -----------------------------------
     # Single User Info Callback
     if key == "info":
@@ -1816,13 +1855,14 @@ def callback_query(call: CallbackQuery):
                 return
             user_data = user_data[0]
             msg = templates.bot_payment_info_template(payment,user_data)
-            photo_path = os.path.join(os.getcwd(), 'UserBot', 'Receiptions', payment['payment_image'])
-            if payment['approved'] == None:
+            payment_image = payment.get('payment_image') or ''
+            photo_path = os.path.join(os.getcwd(), 'UserBot', 'Receiptions', payment_image)
+            reply_markup = markups.confirm_payment_by_admin(payment['id']) if payment['approved'] is None else markups.change_status_payment_by_admin(payment['id'])
+            if payment_image and os.path.isfile(photo_path):
                 bot.send_photo(call.message.chat.id, photo=open(photo_path, 'rb'),
-                            caption=msg, reply_markup=markups.confirm_payment_by_admin(payment['id']))
+                               caption=msg, reply_markup=reply_markup)
             else:
-                bot.send_photo(call.message.chat.id, photo=open(photo_path, 'rb'),
-                            caption=msg, reply_markup=markups.change_status_payment_by_admin(payment['id']))
+                bot.send_message(call.message.chat.id, msg, reply_markup=reply_markup)
         elif item_mode == "Gift":
             gift = USERS_DB.find_user_plans(id=int(value))
 
@@ -1849,7 +1889,7 @@ def callback_query(call: CallbackQuery):
             item_list = [payment for payment in payments_list if payment['payment_method'] == "Card"]
         elif list_mode == "Digital_Payments":
             payments_list = USERS_DB.select_payments()
-            item_list = [payment for payment in payments_list if payment['payment_method'] == "Digital"]
+            item_list = [payment for payment in payments_list if payment['payment_method'] in ("Digital", "Pally")]
         if not item_list:
             bot.send_message(call.message.chat.id, MESSAGES['ERROR_USER_NOT_FOUND'])
             return 
@@ -2065,7 +2105,7 @@ def callback_query(call: CallbackQuery):
         if not payments_list:
             bot.send_message(call.message.chat.id, MESSAGES['ERROR_PAYMENT_NOT_FOUND'])
             return
-        digital_payments_list = [payment for payment in payments_list if payment['payment_method'] == "Digital"]
+        digital_payments_list = [payment for payment in payments_list if payment['payment_method'] in ("Digital", "Pally")]
         if not digital_payments_list:
             bot.send_message(call.message.chat.id, MESSAGES['ERROR_PAYMENT_NOT_FOUND'])
             return
@@ -2173,6 +2213,50 @@ def callback_query(call: CallbackQuery):
         settings = utils.all_configs_settings()
         bot.edit_message_text(MESSAGES['USERS_BOT_SETTINGS'], call.message.chat.id, call.message.message_id,
                               reply_markup=markups.users_bot_management_settings_markup(settings))
+
+    # Payment Methods Settings
+    elif key == "users_bot_settings_payment_methods":
+        settings = utils.all_configs_settings()
+        bot.edit_message_text(
+            MESSAGES['PAYMENT_METHODS_SETTINGS'],
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=markups.payment_methods_settings_markup(settings),
+        )
+
+    elif key == "users_bot_settings_payment_card":
+        status = value == "0"
+        if not _set_bool_config("payment_method_card_enabled", status):
+            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
+            return
+        settings = utils.all_configs_settings()
+        users_bot_settings_update_message(call.message, markups.payment_methods_settings_markup(settings), title=MESSAGES['PAYMENT_METHODS_SETTINGS'])
+
+    elif key == "users_bot_settings_payment_yookassa":
+        status = value == "0"
+        if not _set_bool_config("payment_method_yookassa_enabled", status):
+            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
+            return
+        settings = utils.all_configs_settings()
+        users_bot_settings_update_message(call.message, markups.payment_methods_settings_markup(settings), title=MESSAGES['PAYMENT_METHODS_SETTINGS'])
+
+    elif key == "users_bot_settings_payment_pally":
+        status = value == "0"
+        if not _set_bool_config("payment_method_pally_enabled", status):
+            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
+            return
+        settings = utils.all_configs_settings()
+        users_bot_settings_update_message(call.message, markups.payment_methods_settings_markup(settings), title=MESSAGES['PAYMENT_METHODS_SETTINGS'])
+
+    elif key == "pally_set_url":
+        settings = utils.all_configs_settings()
+        current_value = settings.get('pally_payment_url')
+        bot.send_message(
+            call.message.chat.id,
+            f"{MESSAGES['CURRENT_VALUE']}: {current_value}\n{MESSAGES['PALLY_URL']}",
+            reply_markup=markups.while_edit_user_markup(),
+        )
+        bot.register_next_step_handler(call.message, pally_set_url)
 
     # YooKassa Settings
     elif key == "users_bot_settings_yookassa":

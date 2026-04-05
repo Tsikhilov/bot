@@ -130,6 +130,8 @@ def save_yookassa_settings(db, shop_id, secret_key):
     try:
         db.add_str_config("yookassa_shop_id", shop_id)
         db.add_str_config("yookassa_secret_key", secret_key)
+        db.edit_str_config("yookassa_shop_id", value=shop_id)
+        db.edit_str_config("yookassa_secret_key", value=secret_key)
         return True
     except Exception as e:
         logging.error(f"Error saving YooKassa settings: {e}")

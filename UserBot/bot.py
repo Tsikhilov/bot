@@ -7,7 +7,7 @@ import secrets
 import string
 import re
 import html
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, parse_qsl, urlencode, urlunparse
 import requests
 
 import telebot
@@ -35,11 +35,13 @@ BASE_URL = f"{urlparse(PANEL_URL).scheme}://{urlparse(PANEL_URL).netloc}"
 selected_server_id = 0
 buy_subscription_type = {}
 _short_link_cache = {}
+pending_pally_payments = {}
+_MSK_TZ = datetime.timezone(datetime.timedelta(hours=3), name='MSK')
 
 TARIFF_CATALOG = {
     'individual': {
         'max_ips': 2,
-        'description': 'индивидуальный (до 2 устройств)',
+        'description': 'индивидуальный (2 телефона + 2 ПК/планшета, до 4 устройств)',
         'plans': [
             {'id': 2101, 'days': 30, 'price_rub': 195},
             {'id': 2103, 'days': 90, 'price_rub': 500},
@@ -49,7 +51,7 @@ TARIFF_CATALOG = {
     },
     'family': {
         'max_ips': 5,
-        'description': 'семейный (до 5 устройств)',
+        'description': 'семейный (5 телефонов + 3 ПК/планшета, до 8 устройств)',
         'plans': [
             {'id': 2201, 'days': 30, 'price_rub': 195},
             {'id': 2203, 'days': 90, 'price_rub': 500},
@@ -67,6 +69,46 @@ if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
         logging.info("YooKassa client initialized successfully")
     except Exception as e:
         logging.error(f"Failed to initialize YooKassa client: {e}")
+
+
+def _ensure_yookassa_client():
+    global yookassa_client
+    if yookassa_client:
+        return yookassa_client
+
+    settings = get_yookassa_settings(USERS_DB)
+    if not settings:
+        return None
+
+    try:
+        yookassa_client = YooKassaPayment(settings['shop_id'], settings['secret_key'])
+        return yookassa_client
+    except Exception as e:
+        logging.error(f"Failed to lazy initialize YooKassa client: {e}")
+        return None
+
+
+def _build_pally_payment_url(template, amount_rub, telegram_id, payment_id):
+    if not template:
+        return None
+    url = str(template).strip()
+    if not url:
+        return None
+
+    try:
+        return url.format(amount=amount_rub, telegram_id=telegram_id, payment_id=payment_id)
+    except Exception:
+        delimiter = '&' if '?' in url else '?'
+        return f"{url}{delimiter}amount={amount_rub}&telegram_id={telegram_id}&payment_id={payment_id}"
+
+
+def _generate_gift_code():
+    alphabet = string.ascii_uppercase + string.digits
+    for _ in range(10):
+        code = f"SKV-{''.join(secrets.choice(alphabet) for _ in range(6))}"
+        if not USERS_DB.find_gift_promo_code(code=code):
+            return code
+    return f"SKV-{int(time.time()) % 1000000:06d}"
 
 # *********************************** Helper Functions ***********************************
 # Check if message is digit
@@ -176,7 +218,7 @@ def _get_main_server():
 
 
 def _plan_type_from_max_ips(max_ips):
-    normalized = _to_positive_int(max_ips)
+    normalized = _normalize_tariff_max_ips(max_ips)
     if normalized == 5:
         return 'family'
     if normalized == 2:
@@ -225,16 +267,78 @@ def _extract_max_ips_from_comment(comment):
     return _to_positive_int(m.group(1))
 
 
+def _normalize_tariff_max_ips(value, default=2):
+    normalized = _to_positive_int(value)
+    if normalized in (2, 4):
+        return 2
+    if normalized in (5, 8):
+        return 5
+    if normalized == 5:
+        return 5
+    if normalized == 2:
+        return 2
+    if normalized and normalized > 2:
+        return 2
+    if normalized and normalized < 2:
+        return 2
+    return default
+
+
+def _tariff_device_policy(max_ips):
+    normalized = _normalize_tariff_max_ips(max_ips)
+    if normalized == 5:
+        return {
+            'plan': 'family',
+            'phones': 5,
+            'desktop_tablet': 3,
+            'total': 8,
+        }
+    return {
+        'plan': 'individual',
+        'phones': 2,
+        'desktop_tablet': 2,
+        'total': 4,
+    }
+
+
+def _total_device_limit(max_ips):
+    return _tariff_device_policy(max_ips)['total']
+
+
+def _device_policy_label(max_ips):
+    p = _tariff_device_policy(max_ips)
+    plan_name = 'семейный' if p['plan'] == 'family' else 'индивидуальный'
+    return f"{plan_name}: {p['phones']} телефонов + {p['desktop_tablet']} ПК/планшетов (до {p['total']} устройств)"
+
+
+def _extract_tariff_type_from_comment(comment):
+    text = str(comment or '').lower()
+    if not text:
+        return None
+    if 'type=family' in text or 'семейн' in text or '5 устрой' in text or '5 device' in text:
+        return 'family'
+    if 'type=individual' in text or 'индив' in text or '2 устрой' in text or '2 device' in text:
+        return 'individual'
+    return None
+
+
 def _resolve_user_max_ips(raw_user, sub_record):
+    # Hard tariff policy: only 2 (individual) or 5 (family) devices.
     if isinstance(raw_user, dict):
+        from_comment_type = _extract_tariff_type_from_comment(raw_user.get('comment'))
+        if from_comment_type == 'family':
+            return 5
+        if from_comment_type == 'individual':
+            return 2
+
         for key in ('max_ips', 'maxIps', 'max_clients', 'maxClients'):
-            value = _to_positive_int(raw_user.get(key))
+            value = _normalize_tariff_max_ips(raw_user.get(key), default=None)
             if value:
                 return value
 
         from_comment = _extract_max_ips_from_comment(raw_user.get('comment'))
         if from_comment:
-            return from_comment
+            return _normalize_tariff_max_ips(from_comment)
 
     if isinstance(sub_record, dict):
         order_id = sub_record.get('order_id')
@@ -246,18 +350,16 @@ def _resolve_user_max_ips(raw_user, sub_record):
                 if plan_id:
                     plans = USERS_DB.find_plan(id=plan_id)
                     if plans:
-                        return _plan_device_limit(plans[0])
-    return None
+                        return _normalize_tariff_max_ips(_plan_device_limit(plans[0]))
+
+    # Fallback for legacy/linked subscriptions without order metadata.
+    return 2
 
 
 def _plan_type_label(max_ips):
-    if max_ips == 2:
-        return 'индивидуальный (до 2 устройств)'
-    if max_ips == 5:
-        return 'семейный (до 5 устройств)'
     if isinstance(max_ips, int) and max_ips > 0:
-        return f'до {max_ips} устройств'
-    return 'по данным панели'
+        return _device_policy_label(max_ips)
+    return _device_policy_label(2)
 
 
 def _device_category_from_text(text):
@@ -286,6 +388,243 @@ def _device_usage_summary(devices):
     )
 
 
+def _device_icon_from_entry(entry):
+    probe = " ".join(
+        [
+            str(entry.get('name') or ''),
+            str(entry.get('label') or ''),
+            str(entry.get('os') or ''),
+            str(entry.get('platform') or ''),
+            str(entry.get('app') or ''),
+            str(entry.get('client') or ''),
+            str(entry.get('user_agent') or ''),
+        ]
+    )
+    category = _device_category_from_text(probe)
+    return {
+        'phone': '📱',
+        'tablet': '📟',
+        'pc': '💻',
+        'tv': '📺',
+        'other': '🔎',
+    }.get(category, '🔎')
+
+
+def _parse_device_datetime_msk(value):
+    if value is None:
+        return None
+
+    raw = str(value).strip()
+    if not raw or raw in ('0', 'None', 'none', 'null', '1-01-01 00:00:00'):
+        return None
+
+    # Unix timestamp (sec/ms) -> MSK
+    try:
+        num = float(raw)
+        if num > 0:
+            if num > 10_000_000_000:
+                num = num / 1000.0
+            dt = datetime.datetime.fromtimestamp(num, tz=datetime.timezone.utc)
+            return dt.astimezone(_MSK_TZ)
+    except Exception:
+        pass
+
+    iso_candidate = raw.replace('Z', '+00:00')
+    try:
+        dt = datetime.datetime.fromisoformat(iso_candidate)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_MSK_TZ)
+        return dt.astimezone(_MSK_TZ)
+    except Exception:
+        pass
+
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d.%m.%Y %H:%M', '%d.%m.%y %H:%M'):
+        try:
+            dt = datetime.datetime.strptime(raw, fmt).replace(tzinfo=_MSK_TZ)
+            return dt
+        except Exception:
+            continue
+
+    try:
+        dt_short = datetime.datetime.strptime(raw, '%d.%m %H:%M')
+        now_msk = datetime.datetime.now(_MSK_TZ)
+        dt = dt_short.replace(year=now_msk.year, tzinfo=_MSK_TZ)
+        return dt
+    except Exception:
+        return None
+
+
+def _extract_device_added_at(entry):
+    for key in (
+        'added_at', 'addedAt', 'first_seen', 'firstSeen',
+        'last_seen', 'lastSeen', 'last_online', 'time', 'timestamp', 'ts',
+    ):
+        dt = _parse_device_datetime_msk(entry.get(key))
+        if dt:
+            return dt
+
+    label = str(entry.get('label') or '')
+    patterns = [
+        r"online:\s*([0-3]?\d\.[01]?\d(?:\.\d{2,4})?\s+[0-2]\d:[0-5]\d)",
+        r"last=([0-9\-\.T: ]+)",
+        r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?)",
+        r"([0-3]?\d\.[01]?\d(?:\.\d{2,4})?\s+[0-2]\d:[0-5]\d)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, label, flags=re.IGNORECASE)
+        if not m:
+            continue
+        dt = _parse_device_datetime_msk(m.group(1))
+        if dt:
+            return dt
+    return None
+
+
+def _device_display_name(entry):
+    label = str(entry.get('label') or '').strip()
+    raw_ua = str(entry.get('user_agent') or '').strip()
+
+    for key in ('name', 'device', 'model'):
+        value = str(entry.get(key) or '').strip()
+        if value:
+            return value
+
+    if raw_ua and raw_ua.lower() != 'panel-last-online':
+        return raw_ua
+
+    if label:
+        title = label.split('|', 1)[0].strip()
+        if title:
+            return title
+
+    ip = str(entry.get('ip') or '').strip()
+    return ip or 'Устройство'
+
+
+def _device_os_label(entry):
+    value = str(entry.get('os') or entry.get('platform') or '').strip()
+    return value or 'Неизвестная ОС'
+
+
+def _device_app_label(entry):
+    value = str(entry.get('app') or entry.get('client') or '').strip()
+    if value.lower() == 'panel-last-online':
+        return 'Активность в панели'
+    return value or 'Неизвестное приложение'
+
+
+def _format_device_card(index, entry):
+    icon = _device_icon_from_entry(entry)
+    name = html.escape(_device_display_name(entry))
+    os_name = html.escape(_device_os_label(entry))
+    app_name = html.escape(_device_app_label(entry))
+    added_at = _extract_device_added_at(entry)
+    added_text = added_at.strftime('%d.%m.%y %H:%M') if added_at else 'нет данных'
+    return (
+        f"{index}. {icon} {name}\n"
+        f"• {os_name}\n"
+        f"• {app_name}\n"
+        f"• Добавлено: {added_text} (MSK)"
+    )
+
+
+def _device_actions_supported():
+    try:
+        caps = api.get_provider_capabilities()
+        if isinstance(caps, dict):
+            return bool(caps.get('device_actions', True))
+    except Exception as e:
+        logging.debug("Failed to resolve provider capabilities: %s", e)
+    return True
+
+
+def _resolve_display_sub_id(uuid, raw_user=None, sub_data=None, sub_record=None):
+    candidates = []
+    if isinstance(raw_user, dict):
+        candidates.append(raw_user.get('sub_id'))
+    if isinstance(sub_data, dict):
+        candidates.append(sub_data.get('sub_id'))
+    if isinstance(sub_record, dict):
+        candidates.append(sub_record.get('sub_id'))
+
+    for value in candidates:
+        token = str(value or '').strip()
+        if not token:
+            continue
+        # Показываем только пользовательский sub_id вида 8+ alnum.
+        if re.fullmatch(r"[A-Za-z0-9]{8,}", token):
+            return token[:8]
+
+    return str(uuid or '')[:8] or '-'
+
+
+def _prepare_velvet_devices_screen(uuid, requested_page=0):
+    page_size = 5
+    page = max(0, int(requested_page or 0))
+
+    server_url = _get_server_api_url_by_uuid(uuid)
+    raw_user = api.find(server_url, uuid=uuid) if server_url else None
+    device_entries = _extract_device_entries(raw_user)
+
+    sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
+    max_ips = _resolve_user_max_ips(raw_user, sub_record)
+    _sync_user_max_ips(server_url, uuid, raw_user, max_ips)
+    can_manage_devices = _device_actions_supported()
+
+    trimmed = _enforce_device_limit(server_url, uuid, raw_user, max_ips)
+    if trimmed > 0:
+        raw_user = api.find(server_url, uuid=uuid) if server_url else raw_user
+        device_entries = _extract_device_entries(raw_user)
+
+    policy = _tariff_device_policy(max_ips)
+    limit_label = policy['total']
+    sub_id = _resolve_display_sub_id(uuid, raw_user=raw_user, sub_record=sub_record)
+    total = len(device_entries)
+
+    if total <= 0:
+        device_action_note = "\n\nℹ️ Для текущего провайдера панели управление устройствами недоступно." if not can_manage_devices else ""
+        text = (
+            f"🏠 Главная › 🛒 Управление VPN › 🔑 Подписка #{sub_id} › 📱 Устройства\n\n"
+            f"Ваши устройства: 0/{limit_label}\n\n"
+            f"📌Лимит: {policy['phones']} телефонов + {policy['desktop_tablet']} ПК/планшетов\n\n"
+            f"{MESSAGES['VELVET_DEVICES_EMPTY']}{device_action_note}"
+        )
+        return text, 0, 1, []
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, total_pages - 1)
+    start_idx = page * page_size
+    page_entries = device_entries[start_idx:(page + 1) * page_size]
+
+    if can_manage_devices:
+        page_item_indexes = [
+            start_idx + offset
+            for offset, entry in enumerate(page_entries)
+            if _is_actionable_device_key(entry.get('key'))
+        ]
+    else:
+        page_item_indexes = []
+
+    cards = [
+        _format_device_card(start_idx + offset + 1, entry)
+        for offset, entry in enumerate(page_entries)
+    ]
+    cards_text = "\n\n".join(cards)
+    shown_from = start_idx + 1
+    shown_to = start_idx + len(page_entries)
+
+    device_action_note = "\n\nℹ️ Для текущего провайдера панели управление устройствами недоступно." if not can_manage_devices else ""
+    text = (
+        f"🏠 Главная › 🛒 Управление VPN › 🔑 Подписка #{sub_id} › 📱 Устройства\n\n"
+        f"Ваши устройства: {total}/{limit_label}\n\n"
+        f"📌Лимит: {policy['phones']} телефонов + {policy['desktop_tablet']} ПК/планшетов\n\n"
+        f"Подключенные устройства:\n\n"
+        f"{cards_text}\n\n"
+        f"📄 Показано {shown_from}-{shown_to} из {total}{device_action_note}"
+    )
+    return text, page, total_pages, page_item_indexes
+
+
 def _build_setup_v2_text(uuid, sub_id):
     server_url = _get_server_api_url_by_uuid(uuid)
     source_url = None
@@ -299,9 +638,13 @@ def _build_setup_v2_text(uuid, sub_id):
     if not source_url:
         return MESSAGES['VELVET_SETUP_TEXT'].format(sub_id=sub_id)
 
-    encoded = quote(source_url, safe='')
-    happ_deeplink = f"v2raytun://install-config?url={encoded}"
-    hiddify_deeplink = f"hiddify://install-config?url={encoded}"
+    happ_source_url = _add_url_query_params(source_url, {'app': '1', 'client': 'happ'})
+    hiddify_source_url = _add_url_query_params(source_url, {'app': '1', 'client': 'hiddify'})
+
+    happ_encoded = quote(happ_source_url, safe='')
+    hiddify_encoded = quote(hiddify_source_url, safe='')
+    happ_deeplink = f"v2raytun://install-config?url={happ_encoded}"
+    hiddify_deeplink = f"hiddify://install-config?url={hiddify_encoded}"
 
     return (
         f"🔧Настройка SmartKamaVPN #{sub_id}\n\n"
@@ -318,6 +661,28 @@ def _build_setup_v2_text(uuid, sub_id):
         f"• Универсальная ссылка подписки: <code>{html.escape(source_url)}</code>\n\n"
         f"Если авто-импорт не сработал, нажмите «🔧 Ручная настройка» или «🆘 Не получается подключить»."
     )
+
+
+def _add_url_query_params(url, extra_params):
+    if not url:
+        return url
+    parsed = urlparse(url)
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    changed = False
+    for key, value in (extra_params or {}).items():
+        if value is None:
+            continue
+        value_text = str(value)
+        if params.get(key) == value_text:
+            continue
+        params[key] = value_text
+        changed = True
+
+    if not changed:
+        return url
+
+    new_query = urlencode(params, doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
 
 def _direct_home_url_from_sub_link(sub_link):
@@ -443,6 +808,29 @@ def _remaining_time_parts(remaining_day):
 def _format_time_left(remaining_day):
     d, h, m = _remaining_time_parts(remaining_day)
     return f"{d} дн. {h} ч. {m} мин."
+
+
+def _total_hours_left(remaining_day):
+    d, h, _ = _remaining_time_parts(remaining_day)
+    return (d * 24) + h
+
+
+def _format_expire_at(remaining_day):
+    try:
+        import pytz
+        now = datetime.datetime.now(pytz.timezone('Asia/Tehran'))
+    except Exception:
+        now = datetime.datetime.now()
+
+    try:
+        days_value = float(remaining_day or 0)
+    except (TypeError, ValueError):
+        days_value = 0.0
+
+    if days_value <= 0:
+        return "истекло"
+
+    return (now + datetime.timedelta(days=days_value)).strftime("%d.%m.%Y %H:%M")
 
 
 def _usage_numbers(usage):
@@ -609,12 +997,23 @@ def _extract_device_entries(raw_user):
     candidate_keys = ['ips', 'connected_ips', 'online_ips', 'devices', 'clients']
     entries = []
 
-    def _append_entry(label, action_key=None):
+    def _append_entry(label, action_key=None, name=None, os_name=None, app_name=None, added_at=None):
         clean_label = str(label or '').strip()
         if not clean_label:
             return
         clean_key = str(action_key or '').strip() if action_key else ''
-        entries.append({'label': clean_label, 'key': clean_key or clean_label})
+        entries.append({
+            'label': clean_label,
+            'key': clean_key or clean_label,
+            'name': str(name or '').strip(),
+            'os': str(os_name or '').strip(),
+            'app': str(app_name or '').strip(),
+            'added_at': added_at,
+            'ip': str((action_key or '') if str(action_key or '').strip() else '').strip(),
+            'user_agent': str(name or '').strip(),
+            'platform': str(os_name or '').strip(),
+            'client': str(app_name or '').strip(),
+        })
 
     for key in candidate_keys:
         value = raw_user.get(key)
@@ -623,21 +1022,32 @@ def _extract_device_entries(raw_user):
         if isinstance(value, list):
             for item in value:
                 if isinstance(item, dict):
-                    title = item.get('name') or item.get('device') or item.get('user_agent') or item.get('ip')
+                    title = item.get('name') or item.get('device') or item.get('model') or item.get('user_agent') or item.get('userAgent') or item.get('label') or item.get('ip')
                     os_name = item.get('os') or item.get('platform')
-                    app_name = item.get('app') or item.get('client')
-                    device_key = item.get('ip') or item.get('name') or item.get('device') or item.get('id')
-                    parts = [x for x in [title, os_name, app_name] if x]
-                    _append_entry(' | '.join(parts) if parts else title, action_key=device_key)
+                    app_name = item.get('app') or item.get('client') or item.get('user_agent') or item.get('userAgent')
+                    device_key = item.get('key') or item.get('ip') or item.get('name') or item.get('device') or item.get('id')
+                    added_at = (
+                        item.get('added_at') or item.get('addedAt') or item.get('first_seen') or
+                        item.get('firstSeen') or item.get('last_seen') or item.get('lastSeen') or
+                        item.get('last_online') or item.get('time')
+                    )
+                    label = item.get('label') or ' | '.join([x for x in [title, os_name, app_name] if x])
+                    _append_entry(label or title, action_key=device_key, name=title, os_name=os_name, app_name=app_name, added_at=added_at)
                 elif isinstance(item, str):
                     _append_entry(item, action_key=item)
         elif isinstance(value, dict):
             for dev_key, dev_val in value.items():
                 if isinstance(dev_val, dict):
+                    title = dev_val.get('name') or dev_val.get('device') or dev_val.get('label') or str(dev_key)
                     os_name = dev_val.get('os') or dev_val.get('platform') or ''
-                    app_name = dev_val.get('app') or dev_val.get('client') or ''
-                    label = ' | '.join([x for x in [str(dev_key), os_name, app_name] if x])
-                    _append_entry(label, action_key=dev_val.get('ip') or dev_key)
+                    app_name = dev_val.get('app') or dev_val.get('client') or dev_val.get('user_agent') or dev_val.get('userAgent') or ''
+                    added_at = (
+                        dev_val.get('added_at') or dev_val.get('addedAt') or dev_val.get('first_seen') or
+                        dev_val.get('firstSeen') or dev_val.get('last_seen') or dev_val.get('lastSeen') or
+                        dev_val.get('last_online') or dev_val.get('time')
+                    )
+                    label = dev_val.get('label') or ' | '.join([x for x in [title, os_name, app_name] if x])
+                    _append_entry(label, action_key=dev_val.get('key') or dev_val.get('ip') or dev_key, name=title, os_name=os_name, app_name=app_name, added_at=added_at)
                 else:
                     _append_entry(str(dev_key), action_key=dev_key)
 
@@ -652,19 +1062,57 @@ def _extract_device_entries(raw_user):
     return result
 
 
+def _is_actionable_device_key(device_key):
+    key = str(device_key or '').strip().lower()
+    if not key:
+        return False
+    if key.startswith('virtual:'):
+        return False
+    if key.startswith('dev:'):
+        return True
+    if re.search(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)", key):
+        return True
+    if ':' in key and re.search(r"\b(?:[0-9a-f]{1,4}:){2,}[0-9a-f:]{1,4}\b", key):
+        return True
+    return False
+
+
 def _sync_user_max_ips(server_url, uuid, raw_user, max_ips):
     if not server_url or not isinstance(raw_user, dict):
         return False
     if not isinstance(max_ips, int) or max_ips <= 0:
         return False
+    desired_total_limit = _total_device_limit(max_ips)
     current = _to_positive_int(raw_user.get('max_ips'))
-    if current == max_ips:
+    if current == desired_total_limit:
         return False
-    status = api.update(server_url, uuid, max_ips=max_ips)
+    status = api.update(server_url, uuid, max_ips=desired_total_limit)
     if status:
-        raw_user['max_ips'] = max_ips
+        raw_user['max_ips'] = desired_total_limit
         return True
     return False
+
+
+def _enforce_device_limit(server_url, uuid, raw_user, max_ips):
+    if not server_url or not isinstance(raw_user, dict):
+        return 0
+    if not isinstance(max_ips, int) or max_ips <= 0:
+        return 0
+    desired_total_limit = _total_device_limit(max_ips)
+
+    entries = _extract_device_entries(raw_user)
+    overflow = len(entries) - desired_total_limit
+    if overflow <= 0:
+        return 0
+
+    removed = 0
+    for item in entries[desired_total_limit:]:
+        key = item.get('key')
+        if not _is_actionable_device_key(key):
+            continue
+        if api.delete_device(server_url, uuid, key):
+            removed += 1
+    return removed
 
 
 def _send_velvet_main_menu(chat_id):
@@ -702,6 +1150,15 @@ def _send_velvet_vpn_menu(chat_id):
     bot.send_message(chat_id, MESSAGES['VELVET_VPN_MENU'], reply_markup=velvet_vpn_subscriptions_markup(subscriptions))
 
 
+def _safe_edit_message_text(**kwargs):
+    try:
+        return bot.edit_message_text(**kwargs)
+    except telebot.apihelper.ApiTelegramException as e:
+        if "message is not modified" in str(e).lower():
+            return None
+        raise
+
+
 def _render_subscription_details(uuid):
     sub_data = None
     server_url = _get_server_api_url_by_uuid(uuid)
@@ -723,21 +1180,27 @@ def _render_subscription_details(uuid):
         return None
 
     sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
-    sub_id = sub_data.get('sub_id') or sub_record.get('id', '-')
+    sub_id = _resolve_display_sub_id(uuid, raw_user=user_raw, sub_data=sub_data, sub_record=sub_record)
     remaining_day = sub_data.get('remaining_day', 0)
     usage = sub_data.get('usage', {})
     used_gb, limit_gb, remaining_gb = _usage_numbers(usage)
     time_left = _format_time_left(remaining_day)
+    total_hours_left = _total_hours_left(remaining_day)
+    expire_at = _format_expire_at(remaining_day)
 
     max_ips = _resolve_user_max_ips(user_raw, sub_record)
     _sync_user_max_ips(server_url, uuid, user_raw, max_ips)
+    trimmed = _enforce_device_limit(server_url, uuid, user_raw, max_ips)
+    if trimmed > 0:
+        user_raw = api.find(server_url, uuid=uuid) or user_raw
     plan_type = _plan_type_label(max_ips)
+    policy = _tariff_device_policy(max_ips)
 
     connected = len(_extract_devices(user_raw)) if user_raw else 0
-    limit = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
+    limit = policy['total']
 
-    subscription_link = links.get('sub_link_auto') or links.get('sub_link')
-    home_web_url = links.get('home_link') or ''
+    subscription_link = links.get('public_sub_link') or links.get('sub_link_auto') or links.get('sub_link')
+    home_web_url = links.get('public_home_link') or links.get('home_link') or ''
 
     text = MESSAGES['VELVET_SUB_CARD'].format(
         sub_id=sub_id,
@@ -748,8 +1211,12 @@ def _render_subscription_details(uuid):
         f"\n\n🌐Ссылка на сайт подписки:\n{home_web_url}"
         f"\n\n📊Трафик: израсходовано {used_gb:.2f} / {limit_gb:.2f} ГБ"
         f"\n📉Осталось трафика: {remaining_gb:.2f} ГБ"
+        f"\n📅Дней осталось: {int(remaining_day) if remaining_day else 0}"
+        f"\n🕒Часов осталось: {total_hours_left}"
         f"\n⏳До окончания: {time_left}"
+        f"\n🗓Окончание: {expire_at}"
         f"\n📱Устройства: {connected}/{limit}"
+        f"\n📌Лимит: {policy['phones']} телефонов + {policy['desktop_tablet']} ПК/планшетов"
     )
     return text, sub_id
 
@@ -781,8 +1248,8 @@ def _plans_for_buy_type(type_key, server_id=None):
         return []
 
     keywords = {
-        'individual': ('индив', 'individual', '2 устрой', '2 device'),
-        'family': ('семейн', 'family', '5 устрой', '5 device'),
+        'individual': ('индив', 'individual', '2 устрой', '2 device', '2 телефон', 'до 4 устройств', '4 device'),
+        'family': ('семейн', 'family', '5 устрой', '5 device', '5 телефон', 'до 8 устройств', '8 device'),
     }
     type_words = keywords.get(type_key, ())
     filtered = []
@@ -1059,7 +1526,8 @@ def next_step_send_ticket_to_admin(message):
 
 def create_yookassa_payment(message, amount):
     """Create a YooKassa payment for wallet top-up"""
-    if not yookassa_client:
+    client = _ensure_yookassa_client()
+    if not client:
         bot.send_message(message.chat.id, "❌ЮKassa не настроена. Пожалуйста, используйте другой способ оплаты.",
                          reply_markup=main_menu_keyboard_markup())
         return
@@ -1068,7 +1536,7 @@ def create_yookassa_payment(message, amount):
         payment_id = random.randint(1000000, 9999999)
         return_url = f"https://t.me/{bot.get_me().username}"
 
-        payment_data = yookassa_client.create_payment(
+        payment_data = client.create_payment(
             amount=amount,
             description=f"Пополнение кошелька SmartKamaVPN - {payment_id}",
             return_url=return_url,
@@ -1126,8 +1594,9 @@ def check_yookassa_payment_status(payment_id):
             return {'status': 'canceled'}
 
         # Check with YooKassa API
-        if yookassa_client:
-            yookassa_data = yookassa_client.get_payment(payment_record['yookassa_payment_id'])
+        client = _ensure_yookassa_client()
+        if client:
+            yookassa_data = client.get_payment(payment_record['yookassa_payment_id'])
             if yookassa_data:
                 new_status = yookassa_data['status']
 
@@ -1182,6 +1651,139 @@ def next_step_yookassa_amount(message: Message):
         return
 
     create_yookassa_payment(message, amount)
+
+
+def create_pally_payment(message: Message, amount):
+    settings = utils.all_configs_settings()
+    pally_template = settings.get('pally_payment_url')
+    if not pally_template:
+        bot.send_message(message.chat.id, MESSAGES['PALLY_PAYMENT_NO_URL'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    payment_id = random.randint(1000000, 9999999)
+    amount_internal = utils.toman_to_rial(amount)
+    payment_url = _build_pally_payment_url(pally_template, amount, message.chat.id, payment_id)
+
+    pending_pally_payments[str(payment_id)] = {
+        'telegram_id': message.chat.id,
+        'amount': int(amount_internal),
+        'amount_rub': int(amount),
+    }
+
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(telebot.types.InlineKeyboardButton("💸Оплатить через Pally", url=payment_url))
+    markup.add(telebot.types.InlineKeyboardButton("✅Я оплатил", callback_data=f"check_pally:{payment_id}"))
+    bot.send_message(
+        message.chat.id,
+        f"{MESSAGES['PALLY_PAYMENT_CREATED']}\n\n💰Сумма: {amount}₽",
+        reply_markup=markup,
+    )
+
+
+def next_step_pally_amount(message: Message):
+    if is_it_cancel(message):
+        return
+
+    if not is_it_digit(message, response=MESSAGES['ERROR_INVALID_NUMBER']):
+        bot.register_next_step_handler(message, next_step_pally_amount)
+        return
+
+    amount = int(message.text)
+    settings = utils.all_configs_settings()
+    min_deposit = settings.get('min_deposit_amount', 1000)
+    min_deposit_rub = int(min_deposit / 10)
+
+    if amount < min_deposit_rub:
+        bot.send_message(
+            message.chat.id,
+            f"{MESSAGES['MINIMUM_DEPOSIT_AMOUNT']} {min_deposit_rub}₽",
+            reply_markup=cancel_markup(),
+        )
+        bot.register_next_step_handler(message, next_step_pally_amount)
+        return
+
+    create_pally_payment(message, amount)
+
+
+def next_step_gift_promo_amount(message: Message):
+    if is_it_cancel(message):
+        return
+
+    if not is_it_digit(message, response=MESSAGES['ERROR_INVALID_NUMBER']):
+        bot.register_next_step_handler(message, next_step_gift_promo_amount)
+        return
+
+    amount_rub = int(message.text)
+    if amount_rub <= 0:
+        bot.send_message(message.chat.id, MESSAGES['ERROR_INVALID_NUMBER'], reply_markup=cancel_markup())
+        bot.register_next_step_handler(message, next_step_gift_promo_amount)
+        return
+
+    amount_internal = int(utils.toman_to_rial(amount_rub))
+    wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
+    balance = int(wallet[0]['balance']) if wallet else 0
+    if balance < amount_internal:
+        need_more = amount_internal - balance
+        bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'], reply_markup=wallet_info_specific_markup(need_more))
+        return
+
+    code = _generate_gift_code()
+    created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not USERS_DB.add_gift_promo_code(code, message.chat.id, amount_internal, created_at):
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    if not USERS_DB.edit_wallet(message.chat.id, balance=(balance - amount_internal)):
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    bot.send_message(
+        message.chat.id,
+        MESSAGES['SKV_GIFT_PROMO_CREATED'].format(code=code, amount=amount_rub),
+        reply_markup=main_menu_keyboard_markup(),
+    )
+
+
+def next_step_redeem_gift_promo(message: Message):
+    if is_it_cancel(message):
+        return
+
+    code = (message.text or '').strip().upper()
+    if not code:
+        bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_PROMO_INVALID'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    promo_rows = USERS_DB.find_gift_promo_code(code=code)
+    if not promo_rows:
+        bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_PROMO_INVALID'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    promo = promo_rows[0]
+    if promo.get('status') != 'new':
+        bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_PROMO_ALREADY_USED'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    if int(promo.get('creator_telegram_id', 0)) == int(message.chat.id):
+        bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_PROMO_SELF_DENIED'], reply_markup=main_menu_keyboard_markup())
+        return
+
+    wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
+    if wallet:
+        new_balance = int(wallet[0]['balance']) + int(promo['amount'])
+        USERS_DB.edit_wallet(message.chat.id, balance=new_balance)
+    else:
+        USERS_DB.add_wallet(message.chat.id)
+        USERS_DB.edit_wallet(message.chat.id, balance=int(promo['amount']))
+
+    redeemed_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    USERS_DB.redeem_gift_promo_code(code, message.chat.id, redeemed_at)
+
+    amount_rub = int(int(promo['amount']) / 10)
+    bot.send_message(
+        message.chat.id,
+        MESSAGES['SKV_GIFT_PROMO_SUCCESS'].format(amount=amount_rub),
+        reply_markup=main_menu_keyboard_markup(),
+    )
 
 
 # ----------------------------------- Buy From Wallet Area -----------------------------------
@@ -1294,7 +1896,7 @@ def next_step_send_name_for_get_free_test(message: Message, server_id):
         return
 
     settings = utils.all_configs_settings()
-    test_user_comment = "HidyBot:FreeTest"
+    test_user_comment = "HidyBot:FreeTest;type=individual;max_ips=2"
     server = USERS_DB.find_server(id=server_id)
     if not server:
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
@@ -1303,8 +1905,14 @@ def next_step_send_name_for_get_free_test(message: Message, server_id):
     server = server[0]
     URL = server['url'] + API_PATH
     # uuid = ADMIN_DB.add_default_user(name, test_user_days, test_user_size_gb, int(PANEL_ADMIN_ID), test_user_comment)
-    uuid = api.insert(URL, name=name, usage_limit_GB=settings['test_sub_size_gb'], package_days=settings['test_sub_days'],
-                      comment=test_user_comment)
+    uuid = api.insert(
+        URL,
+        name=name,
+        usage_limit_GB=settings['test_sub_size_gb'],
+        package_days=settings['test_sub_days'],
+        comment=test_user_comment,
+        max_ips=2,
+    )
     if not uuid:
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                          reply_markup=main_menu_keyboard_markup())
@@ -1513,29 +2121,95 @@ def callback_query(call: CallbackQuery):
     key = data[0]
     value = data[1] if len(data) > 1 else ""
 
+    # Backward/forward compatibility for callback prefixes.
+    if key.startswith("smartkamavpn_"):
+        key = f"velvet_{key[len('smartkamavpn_'):]}"
+
     global selected_server_id
     # ----------------------------------- YooKassa Payment Area -----------------------------------
-    if key == 'yookassa_payment':
+    if key == 'select_payment_method':
+        bot.send_message(call.message.chat.id, MESSAGES['SELECT_PAYMENT_METHOD'], reply_markup=payment_method_selection_markup())
+
+    elif key == 'select_payment_method_specific':
+        bot.send_message(call.message.chat.id, MESSAGES['SELECT_PAYMENT_METHOD'], reply_markup=payment_method_selection_markup(value))
+
+    elif key == 'yookassa_payment':
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(call.message.chat.id, MESSAGES['INCREASE_WALLET_BALANCE_AMOUNT'], reply_markup=cancel_markup())
-        bot.register_next_step_handler(call.message, next_step_yookassa_amount)
+        if value and str(value).isdigit():
+            create_yookassa_payment(call.message, int(value))
+        else:
+            bot.send_message(call.message.chat.id, MESSAGES['INCREASE_WALLET_BALANCE_AMOUNT'], reply_markup=cancel_markup())
+            bot.register_next_step_handler(call.message, next_step_yookassa_amount)
+
+    elif key == 'pally_payment':
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        if value and str(value).isdigit():
+            create_pally_payment(call.message, int(value))
+        else:
+            bot.send_message(call.message.chat.id, MESSAGES['INCREASE_WALLET_BALANCE_AMOUNT'], reply_markup=cancel_markup())
+            bot.register_next_step_handler(call.message, next_step_pally_amount)
+
+    elif key == 'check_pally':
+        payment_id = int(value)
+        if USERS_DB.find_payment(id=payment_id):
+            bot.answer_callback_query(call.id, MESSAGES['PALLY_PAYMENT_ALREADY_MARKED'], show_alert=True)
+            return
+
+        request_data = pending_pally_payments.get(str(value))
+        if not request_data or int(request_data['telegram_id']) != int(call.message.chat.id):
+            bot.answer_callback_query(call.id, MESSAGES['UNKNOWN_ERROR'], show_alert=True)
+            return
+
+        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = USERS_DB.add_payment(
+            payment_id,
+            call.message.chat.id,
+            int(request_data['amount']),
+            "Pally",
+            "",
+            created_at,
+        )
+        if not status:
+            bot.answer_callback_query(call.id, MESSAGES['UNKNOWN_ERROR'], show_alert=True)
+            return
+
+        bot_users = USERS_DB.find_user(telegram_id=call.message.chat.id)
+        bot_user = bot_users[0] if bot_users else None
+        full_name = bot_user['full_name'] if bot_user and bot_user.get('full_name') else str(call.message.chat.id)
+
+        for admin_id in ADMINS_ID:
+            admin_bot.send_message(
+                admin_id,
+                (
+                    "💸Новый платеж Pally\n"
+                    f"ID: <code>{payment_id}</code>\n"
+                    f"Пользователь: {html.escape(full_name)}\n"
+                    f"Telegram ID: <code>{call.message.chat.id}</code>\n"
+                    f"Сумма: {request_data['amount_rub']}₽"
+                ),
+                reply_markup=confirm_payment_by_admin(payment_id),
+            )
+
+        pending_pally_payments.pop(str(value), None)
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, MESSAGES['PALLY_PAYMENT_MARKED'], reply_markup=main_menu_keyboard_markup())
 
     elif key == 'check_yookassa':
         result = check_yookassa_payment_status(value)
         if result:
             if result['status'] == 'succeeded':
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=f"{MESSAGES['YOOKASSA_PAYMENT_SUCCESS']}\n💰Сумма: {result['amount']}₽",
-                    reply_markup=main_menu_keyboard_markup()
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                bot.send_message(
+                    call.message.chat.id,
+                    f"{MESSAGES['YOOKASSA_PAYMENT_SUCCESS']}\n💰Сумма: {result['amount']}₽",
+                    reply_markup=main_menu_keyboard_markup(),
                 )
             elif result['status'] == 'canceled':
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=MESSAGES['YOOKASSA_PAYMENT_CANCELED'],
-                    reply_markup=main_menu_keyboard_markup()
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+                bot.send_message(
+                    call.message.chat.id,
+                    MESSAGES['YOOKASSA_PAYMENT_CANCELED'],
+                    reply_markup=main_menu_keyboard_markup(),
                 )
             else:
                 bot.answer_callback_query(call.id, MESSAGES['YOOKASSA_PAYMENT_PENDING'], show_alert=True)
@@ -1734,8 +2408,19 @@ def callback_query(call: CallbackQuery):
                              reply_markup=main_menu_keyboard_markup())
             return
         renew_subscription_dict[call.message.chat.id]['uuid'] = value
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
-                                      reply_markup=plans_list_markup(plans, renewal=True,uuid=user_info_process['uuid']))
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="🔄 Продление подписки\n\nВыберите тариф для продления:",
+                reply_markup=plans_list_markup(plans, renewal=True, uuid=user_info_process['uuid'])
+            )
+        except telebot.apihelper.ApiTelegramException:
+            bot.edit_message_reply_markup(
+                call.message.chat.id,
+                call.message.message_id,
+                reply_markup=plans_list_markup(plans, renewal=True, uuid=user_info_process['uuid'])
+            )
 
     elif key == 'renewal_plan_selected':
         plan_rows = USERS_DB.find_plan(id=value)
@@ -1832,14 +2517,16 @@ def callback_query(call: CallbackQuery):
         if not sub:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
-        qr_code = utils.txt_to_qr(sub['sub_link'])
+        raw_sub_link = sub.get('sub_link_raw') or sub.get('sub_link')
+        public_sub_link = sub.get('public_sub_link') or raw_sub_link
+        qr_code = utils.txt_to_qr(raw_sub_link)
         if not qr_code:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
         bot.send_photo(
             call.message.chat.id,
             photo=qr_code,
-            caption=f"{KEY_MARKUP['CONFIGS_SUB']}\n<code>{sub['sub_link']}</code>",
+            caption=f"{KEY_MARKUP['CONFIGS_SUB']}\n<code>{public_sub_link}</code>",
             reply_markup=main_menu_keyboard_markup()
         )
     # User Configs - Base64 Subscription Configs Callback
@@ -1896,7 +2583,8 @@ def callback_query(call: CallbackQuery):
         if not sub:
             bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
-        target_sub_link = sub.get('sub_link_auto') or sub.get('sub_link')
+        target_sub_link = sub.get('sub_link_auto_raw') or sub.get('sub_link_auto') or sub.get('sub_link')
+        display_sub_link = sub.get('public_sub_link') or target_sub_link
         sub_data = None
         server_url = _get_server_api_url_by_uuid(value)
         if server_url:
@@ -1912,7 +2600,7 @@ def callback_query(call: CallbackQuery):
         bot.send_photo(
             call.message.chat.id,
             photo=qr_code,
-            caption=f"{KEY_MARKUP['CONFIGS_SUB_AUTO']}\n<code>{target_sub_link}</code>",
+            caption=f"{KEY_MARKUP['CONFIGS_SUB_AUTO']}\n<code>{display_sub_link}</code>",
             reply_markup=main_menu_keyboard_markup()
         )
 
@@ -1968,6 +2656,13 @@ def callback_query(call: CallbackQuery):
             bot.send_message(call.message.chat.id, linux_msg, reply_markup=main_menu_keyboard_markup())
 
     # ----------------------------------- Velvet UI Area -----------------------------------
+    elif key == "velvet_title_menu":
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        _send_velvet_main_menu(call.message.chat.id)
+
     elif key == "velvet_vpn_menu":
         subscriptions = _get_subscriptions_for_user(call.message.chat.id)
         text = MESSAGES['VELVET_VPN_MENU'] if subscriptions else MESSAGES['VELVET_NO_SUBS']
@@ -1976,6 +2671,23 @@ def callback_query(call: CallbackQuery):
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=velvet_vpn_subscriptions_markup(subscriptions)
+        )
+
+    elif key == "velvet_renew_menu":
+        subscriptions = _get_subscriptions_for_user(call.message.chat.id)
+        if not subscriptions:
+            bot.edit_message_text(
+                text=MESSAGES['VELVET_NO_SUBS'],
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=velvet_vpn_subscriptions_markup([])
+            )
+            return
+        bot.edit_message_text(
+            text="🔄 Выберите подписку, которую хотите продлить:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=velvet_renew_subscriptions_markup(subscriptions)
         )
 
     elif key == "velvet_sub_open":
@@ -2030,6 +2742,38 @@ def callback_query(call: CallbackQuery):
     elif key == "velvet_done":
         bot.send_message(call.message.chat.id, "✅Отлично! Если понадобится помощь, нажмите «🆘Помощь».", reply_markup=main_menu_keyboard_markup())
 
+    elif key == "velvet_conf_happ":
+        if not _subscription_belongs_to_user(value, call.message.chat.id):
+            bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
+            return
+
+        server_url = _get_server_api_url_by_uuid(value)
+        panel_base = server_url.replace(API_PATH, '') if server_url else None
+        links = utils.sub_links(value, url=panel_base) if panel_base else utils.sub_links(value)
+        source_url = (links or {}).get('sub_link_auto') or (links or {}).get('sub_link')
+        if not source_url:
+            bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
+            return
+
+        happ_sub_link = _add_url_query_params(source_url, {'app': '1', 'client': 'happ'})
+        happ_deeplink = f"v2raytun://install-config?url={quote(happ_sub_link, safe='')}"
+        qr_code = utils.txt_to_qr(happ_sub_link)
+        if not qr_code:
+            bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+            return
+
+        home_web_url = (links or {}).get('home_link')
+        bot.send_photo(
+            call.message.chat.id,
+            photo=qr_code,
+            caption=(
+                "📱 Happ / V2RayTun\n\n"
+                f"🔗 Ссылка подписки:\n<code>{html.escape(happ_sub_link)}</code>\n\n"
+                f"⚡ Авто-импорт (deeplink):\n<code>{html.escape(happ_deeplink)}</code>"
+            ),
+            reply_markup=velvet_params_markup(value, home_web_url),
+        )
+
     elif key == "velvet_params":
         server_url = _get_server_api_url_by_uuid(value)
         panel_base = server_url.replace(API_PATH, '') if server_url else None
@@ -2038,9 +2782,14 @@ def callback_query(call: CallbackQuery):
         home_web_url = (links or {}).get('home_link')
         params_text = (
             "\U0001f310 <b>Подписка SmartKamaVPN</b>\n\n"
-            "Выберите действие:\n"
-            "• 🔗 Подписка — открыть QR и ссылку для подключения\n"
-            "• 🌐 Открыть сайт подписки — открыть страницу в панели\n"
+            "Выберите клиент и получите подходящую ссылку/QR:\n"
+            "• 📱 Happ / V2RayTun\n"
+            "• 🟠 Hiddify\n"
+            "• 🥷 Clash\n"
+            "• 📦 Sing-box\n"
+            "• ⚡ Авто-подключение\n"
+            "• 🔗 Универсальная ссылка\n\n"
+            "Сайт подписки:\n"
             f"<code>{html.escape(home_web_url or '')}</code>"
         )
         try:
@@ -2069,37 +2818,8 @@ def callback_query(call: CallbackQuery):
         else:
             uuid = value
             page = 0
-        server_url = _get_server_api_url_by_uuid(uuid)
-        raw_user = api.find(server_url, uuid=uuid) if server_url else None
-        device_entries = _extract_device_entries(raw_user)
-        devices = [entry['label'] for entry in device_entries]
-        sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
-        max_ips = _resolve_user_max_ips(raw_user, sub_record)
-        _sync_user_max_ips(server_url, uuid, raw_user, max_ips)
-        limit_label = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
-
-        if not devices:
-            lines = MESSAGES['VELVET_DEVICES_EMPTY']
-            total_pages = 1
-            page_item_indexes = []
-        else:
-            page_size = 5
-            total_pages = max(1, (len(devices) + page_size - 1) // page_size)
-            page = min(page, total_pages - 1)
-            page_items = devices[page * page_size:(page + 1) * page_size]
-            page_item_indexes = list(range(page * page_size, page * page_size + len(page_items)))
-            lines = "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(page_items, start=page * page_size)])
-
-        sub = sub_record
-        sub_id = sub['id'] if sub else '-'
-        summary = _device_usage_summary(devices)
-        text = MESSAGES['VELVET_DEVICES_TEXT'].format(
-            sub_id=sub_id,
-            used=len(devices),
-            limit=limit_label,
-            devices=f"{summary}\n\n{lines}",
-        )
-        bot.edit_message_text(
+        text, page, total_pages, page_item_indexes = _prepare_velvet_devices_screen(uuid, page)
+        _safe_edit_message_text(
             text=text,
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -2107,6 +2827,19 @@ def callback_query(call: CallbackQuery):
         )
 
     elif key in ("velvet_dev_block", "velvet_dev_del"):
+        if not _device_actions_supported():
+            bot.answer_callback_query(call.id, "Для текущего типа панели блокировка и удаление устройств недоступны", show_alert=True)
+            if '|' in value:
+                uuid = value.split('|', 1)[0]
+                text, page, total_pages, page_item_indexes = _prepare_velvet_devices_screen(uuid, 0)
+                _safe_edit_message_text(
+                    text=text,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=velvet_devices_markup(uuid, page, total_pages, page_item_indexes),
+                )
+            return
+
         if '|' not in value:
             bot.answer_callback_query(call.id, MESSAGES['UNKNOWN_ERROR'], show_alert=True)
             return
@@ -2124,6 +2857,9 @@ def callback_query(call: CallbackQuery):
             return
 
         target = entries[idx]
+        if not _is_actionable_device_key(target.get('key')):
+            bot.answer_callback_query(call.id, "Для этого устройства действие недоступно", show_alert=True)
+            return
         action_ok = False
         if key == "velvet_dev_block":
             action_ok = api.block_device(server_url, uuid, target.get('key')) if server_url else False
@@ -2132,35 +2868,10 @@ def callback_query(call: CallbackQuery):
             action_ok = api.delete_device(server_url, uuid, target.get('key')) if server_url else False
             bot.answer_callback_query(call.id, "Устройство удалено" if action_ok else "Не удалось удалить", show_alert=not action_ok)
 
-        # Refresh devices view after action.
-        raw_user = api.find(server_url, uuid=uuid) if server_url else None
-        device_entries = _extract_device_entries(raw_user)
-        devices = [entry['label'] for entry in device_entries]
-        sub_record = utils.find_order_subscription_by_uuid(uuid) or {}
-        max_ips = _resolve_user_max_ips(raw_user, sub_record)
-        _sync_user_max_ips(server_url, uuid, raw_user, max_ips)
-        limit_label = max_ips if isinstance(max_ips, int) and max_ips > 0 else '?'
-
         page_size = 5
-        total_pages = max(1, (len(devices) + page_size - 1) // page_size) if devices else 1
-        page = min(idx // page_size, total_pages - 1)
-        if not devices:
-            lines = MESSAGES['VELVET_DEVICES_EMPTY']
-            page_item_indexes = []
-        else:
-            page_items = devices[page * page_size:(page + 1) * page_size]
-            page_item_indexes = list(range(page * page_size, page * page_size + len(page_items)))
-            lines = "\n".join([f"{n + 1}. {item}" for n, item in enumerate(page_items, start=page * page_size)])
-
-        sub_id = sub_record['id'] if sub_record else '-'
-        summary = _device_usage_summary(devices)
-        text = MESSAGES['VELVET_DEVICES_TEXT'].format(
-            sub_id=sub_id,
-            used=len(devices),
-            limit=limit_label,
-            devices=f"{summary}\n\n{lines}",
-        )
-        bot.edit_message_text(
+        target_page = idx // page_size
+        text, page, total_pages, page_item_indexes = _prepare_velvet_devices_screen(uuid, target_page)
+        _safe_edit_message_text(
             text=text,
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -2216,8 +2927,63 @@ def callback_query(call: CallbackQuery):
     elif key == "velvet_gift":
         bot.send_message(
             call.message.chat.id,
-            MESSAGES['SKV_GIFT_INTRO'],
-            reply_markup=subscription_type_markup()
+            MESSAGES['SKV_GIFT_MENU'],
+            reply_markup=smartkamavpn_gift_menu_markup()
+        )
+
+    elif key == "velvet_gift_promo":
+        bot.send_message(
+            call.message.chat.id,
+            MESSAGES['SKV_GIFT_PROMO_ASK_AMOUNT'],
+            reply_markup=cancel_markup(),
+        )
+        bot.register_next_step_handler(call.message, next_step_gift_promo_amount)
+
+    elif key == "velvet_gift_subscription":
+        subscriptions = _get_subscriptions_for_user(call.message.chat.id)
+        if not subscriptions:
+            bot.send_message(call.message.chat.id, MESSAGES['VELVET_NO_SUBS'], reply_markup=main_menu_keyboard_markup())
+            return
+        bot.send_message(
+            call.message.chat.id,
+            MESSAGES['SKV_GIFT_SUB_PICK'],
+            reply_markup=smartkamavpn_gift_subscription_markup(subscriptions),
+        )
+
+    elif key == "velvet_gift_sub_pick":
+        if not _subscription_belongs_to_user(value, call.message.chat.id):
+            bot.answer_callback_query(call.id, MESSAGES['SUBSCRIPTION_NOT_FOUND'], show_alert=True)
+            return
+
+        sub_record = utils.find_order_subscription_by_uuid(value) or {}
+        user_raw = api.find(_get_server_api_url_by_uuid(value), uuid=value)
+        sub_id = _resolve_display_sub_id(value, raw_user=user_raw, sub_record=sub_record)
+        remaining = 0
+        subscriptions = _get_subscriptions_for_user(call.message.chat.id)
+        for sub in subscriptions:
+            if sub.get('uuid') == value:
+                remaining = int(sub.get('remaining_day', 0) or 0)
+                break
+
+        hours_left = _total_hours_left(remaining)
+        expire_at = _format_expire_at(remaining)
+        s_url = _get_server_api_url_by_uuid(value)
+        p_base = s_url.replace(API_PATH, '') if s_url else None
+        links = utils.sub_links(value, url=p_base) if p_base else utils.sub_links(value)
+        raw_link = (links or {}).get('sub_link_auto') or (links or {}).get('sub_link')
+        share_link = _shorten_url(raw_link) if raw_link else '-'
+
+        bot.send_message(
+            call.message.chat.id,
+            MESSAGES['SKV_GIFT_SUB_CARD'].format(
+                sub_id=sub_id,
+                days=remaining,
+                hours=hours_left,
+                expire_at=expire_at,
+                link=html.escape(share_link),
+            ),
+            reply_markup=main_menu_keyboard_markup(),
+            disable_web_page_preview=True,
         )
 
     elif key == "velvet_bought_gifts":
@@ -2230,6 +2996,9 @@ def callback_query(call: CallbackQuery):
             sub_uuid = sub.get('uuid')
             sub_id = sub.get('sub_id', '-')
             remaining = int(sub.get('remaining_day', 0))
+            hours_left = _total_hours_left(remaining)
+            time_left = _format_time_left(remaining)
+            expire_at = _format_expire_at(remaining)
             s_url = _get_server_api_url_by_uuid(sub_uuid)
             p_base = s_url.replace(API_PATH, '') if s_url else None
             lnks = utils.sub_links(sub_uuid, url=p_base) if p_base else utils.sub_links(sub_uuid)
@@ -2240,7 +3009,10 @@ def callback_query(call: CallbackQuery):
                 short_gift = '-'
             status_icon = '✅' if sub.get('active') else '⏸️'
             lines.append(
-                f"{status_icon} #{sub_id} — осталось {remaining} дн.\n🔗 <code>{html.escape(short_gift)}</code>"
+                f"{status_icon} #{sub_id} — осталось {remaining} дн. ({hours_left} ч.)"
+                f"\n⏳ {time_left}"
+                f"\n🗓 До: {expire_at}"
+                f"\n🔗 <code>{html.escape(short_gift)}</code>"
             )
         bot.send_message(
             call.message.chat.id,
@@ -2579,6 +3351,27 @@ def wallet_balance(message: Message):
                          reply_markup=wallet_info_markup())
     else:
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+
+
+@bot.message_handler(func=lambda message: message.text == KEY_MARKUP['GIFT_VPN'])
+def gift_vpn_menu(message: Message):
+    if is_user_banned(message.chat.id):
+        return
+    join_status = is_user_in_channel(message.chat.id)
+    if not join_status:
+        return
+    bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_MENU'], reply_markup=smartkamavpn_gift_menu_markup())
+
+
+@bot.message_handler(func=lambda message: message.text == KEY_MARKUP['MTPROMO'])
+def redeem_promo_menu(message: Message):
+    if is_user_banned(message.chat.id):
+        return
+    join_status = is_user_in_channel(message.chat.id)
+    if not join_status:
+        return
+    bot.send_message(message.chat.id, MESSAGES['SKV_GIFT_PROMO_REDEEM_ASK'], reply_markup=cancel_markup())
+    bot.register_next_step_handler(message, next_step_redeem_gift_promo)
 
 
 # User Buy Subscription Message Handler
