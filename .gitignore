@@ -11,3 +11,7 @@ config.json
 *.pyc
 *.pyo
 .vscode/launch.json
+
+# Artifacts
+%JAR%
+tmp_prod_validate*
