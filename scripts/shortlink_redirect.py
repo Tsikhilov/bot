@@ -777,6 +777,12 @@ def _rewrite_uri_host(line: str, export_host: str | None) -> str:
         return line
     if not (line.startswith("vless://") or line.startswith("trojan://")):
         return line
+    # REALITY inbounds must keep raw server IP for correct sing-box operation
+    _uri_q = line.split("#", 1)[0]
+    _params_q = dict(parse_qsl(urlparse(_uri_q).query, keep_blank_values=True))
+    if (_params_q.get("security") or "").lower() == "reality":
+        return line
+
 
     uri_part, sep, fragment = line.partition("#")
     parsed = urlparse(uri_part)
@@ -1120,6 +1126,19 @@ def _build_singbox_outbound(line: str):
     return None
 
 
+
+def _collect_server_ips(outbounds):
+    import re as _re
+    ips = []
+    seen = set()
+    for ob in outbounds:
+        srv = ob.get('server', '')
+        if _re.match(r'^\d+\.\d+\.\d+\.\d+$', srv) and srv not in seen:
+            ips.append(srv + '/32')
+            seen.add(srv)
+    return ips
+
+
 def _build_singbox_config(proxy_lines, operator=None):
     """Build a full sing-box JSON configuration from proxy lines."""
     ordered = _sort_lines_by_operator(proxy_lines, operator)
@@ -1141,9 +1160,9 @@ def _build_singbox_config(proxy_lines, operator=None):
         "tag": "auto",
         "outbounds": list(proxy_tags),
         "url": "https://www.gstatic.com/generate_204",
-        "interval": "3m",
-        "tolerance": 150,
-    }
+        "interval": "1m",
+        "tolerance": 50,
+        }
 
     # selector — manual pick through UI
     selector = {
@@ -1193,19 +1212,7 @@ def _build_singbox_config(proxy_lines, operator=None):
             "final": "dns-proxy",
             "strategy": "prefer_ipv4",
         },
-        "inbounds": [
-            {
-                "type": "tun",
-                "tag": "tun-in",
-                "inet4_address": "172.19.0.1/30",
-                "inet6_address": "fdfe:dcba:9876::1/126",
-                "auto_route": True,
-                "strict_route": True,
-                "stack": "mixed",
-                "sniff": True,
-                "sniff_override_destination": True,
-            },
-        ],
+        "inbounds": [],
         "outbounds": all_outbounds,
         "route": {
             "auto_detect_interface": True,
@@ -1223,7 +1230,7 @@ def _build_singbox_config(proxy_lines, operator=None):
                     "outbound": "direct",
                 },
                 {
-                    "ip_cidr": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+                    "ip_cidr": _collect_server_ips(outbounds) + ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
                     "outbound": "direct",
                 },
             ],
@@ -1251,17 +1258,7 @@ def _build_singbox_config(proxy_lines, operator=None):
                 },
             ],
         },
-        "experimental": {
-            "clash_api": {
-                "external_controller": "127.0.0.1:9090",
-                "external_ui": "ui",
-                "default_mode": "Rule",
-            },
-            "cache_file": {
-                "enabled": True,
-                "store_fakeip": True,
-            },
-        },
+
     }
     return config
 
@@ -1539,6 +1536,28 @@ class Handler(BaseHTTPRequestHandler):
                             fallback_target = f"{fallback_target}?{parsed.query}"
                         payload, content_type, upstream_headers = proxy_subscription_source(fallback_target)
             if payload is not None:
+                # Auto-detect sing-box capable clients (happ, hiddify, sing-box, nekobox...)
+                # and serve sing-box JSON format instead of base64 for better UI display
+                ua_lower = (self.headers.get("User-Agent") or "").lower()
+                fmt_param = (query.get("format") or [""])[0].lower().strip()
+                _sb_clients = ("sing-box", "singbox", "hiddify", "nekobox")
+                wants_singbox = (fmt_param in ("singbox", "sing-box", "json") or
+                                 any(h in ua_lower for h in _sb_clients))
+                if wants_singbox:
+                    try:
+                        lines = _get_normalized_lines(payload, export_host=export_host)
+                        config = _build_singbox_config(lines, operator=operator)
+                        if config:
+                            body = json.dumps(config, ensure_ascii=False, indent=2).encode("utf-8")
+                            self.send_response(200)
+                            self.send_header("Content-Type", "application/json; charset=utf-8")
+                            self.send_header("Cache-Control", "no-store")
+                            self.end_headers()
+                            if send_body:
+                                self.wfile.write(body)
+                            return
+                    except Exception:
+                        pass  # fallback to base64 below
                 payload = _normalize_subscription_payload(target, payload, operator=operator, export_host=export_host)
                 self.send_response(200)
                 self.send_header("Content-Type", content_type or "text/plain; charset=utf-8")
