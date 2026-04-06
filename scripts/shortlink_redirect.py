@@ -971,7 +971,7 @@ def _parse_vless_line(line: str):
         host = hostport
     port = int(port_s) if port_s.isdigit() else 443
     tag = unquote(fragment) if fragment else f"vless-{host}:{port}"
-    tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]*\)\s*$', '', tag).strip()
+    tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]{4,}\)\s*$', '', tag).strip()
     return {
         "uuid": uuid_part,
         "server": host,
@@ -1000,7 +1000,7 @@ def _parse_trojan_line(line: str):
     port = parsed.port or 443
     params = dict(parse_qsl(parsed.query, keep_blank_values=True))
     tag = unquote(fragment) if fragment else f"trojan-{host}:{port}"
-    tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]*\)\s*$', '', tag).strip()
+    tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]{4,}\)\s*$', '', tag).strip()
     return {
         "password": password,
         "server": host,
@@ -1094,7 +1094,7 @@ def _build_singbox_outbound(line: str):
         except Exception:
             return None
         tag = cfg.get("ps") or f"vmess-{cfg.get('add')}:{cfg.get('port')}"
-        tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]*\)\s*$', '', tag).strip()
+        tag = re.sub(r'\s+\([a-zA-Z0-9][a-zA-Z0-9._-]{4,}\)\s*$', '', tag).strip()
         out = {
             "type": "vmess",
             "tag": tag,
