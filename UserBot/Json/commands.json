@@ -1,8 +1,23 @@
 {
     "EN": {
-        "START": "start"
+        "START": "Start / Main menu",
+        "SUBSCRIPTIONS": "My subscriptions",
+        "REFERRAL": "Referral program",
+        "HELP": "Help & support",
+        "ABOUT": "About the service"
+    },
+    "RU": {
+        "START": "Старт / Главное меню",
+        "SUBSCRIPTIONS": "Мои подписки",
+        "REFERRAL": "Реферальная программа",
+        "HELP": "Помощь и поддержка",
+        "ABOUT": "О сервисе"
     },
     "FA": {
-        "START": "شروع"
+        "START": "شروع / منوی اصلی",
+        "SUBSCRIPTIONS": "اشتراک‌های من",
+        "REFERRAL": "برنامه معرفی",
+        "HELP": "کمک و پشتیبانی",
+        "ABOUT": "درباره سرویس"
     }
 }
