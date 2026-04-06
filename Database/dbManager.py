@@ -209,7 +209,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM users WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"User {kwargs} not found!")
+                logging.debug(f"User {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -294,7 +294,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM plans WHERE {key}=? ORDER BY price ASC", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Plan {kwargs} not found!")
+                logging.debug(f"Plan {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -366,7 +366,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM user_plans WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Plan {kwargs} not found!")
+                logging.debug(f"Plan {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -439,7 +439,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM orders WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Order {kwargs} not found!")
+                logging.debug(f"Order {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -497,7 +497,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM order_subscriptions WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Order {kwargs} not found!")
+                logging.debug(f"Order {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -567,7 +567,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM non_order_subscriptions WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Order {kwargs} not found!")
+                logging.debug(f"Order {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -611,7 +611,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM bool_config WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Settings {kwargs} not found!")
+                logging.debug(f"Settings {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -668,7 +668,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM str_config WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Settings {kwargs} not found!")
+                logging.debug(f"Settings {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -726,7 +726,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM int_config WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Settings {kwargs} not found!")
+                logging.debug(f"Settings {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -858,7 +858,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM wallet WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Balance {kwargs} not found!")
+                logging.debug(f"Balance {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -915,7 +915,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM payments WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Payment {kwargs} not found!")
+                logging.debug(f"Payment {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -981,7 +981,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM servers WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Server {kwargs} not found!")
+                logging.debug(f"Server {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -1031,7 +1031,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM yookassa_payments WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"YooKassa Payment {kwargs} not found!")
+                logging.debug(f"YooKassa Payment {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
@@ -1087,7 +1087,7 @@ class UserDBManager:
                 cur.execute(f"SELECT * FROM gift_promo_codes WHERE {key}=?", (value,))
                 rows = cur.fetchall()
             if len(rows) == 0:
-                logging.info(f"Gift promo code {kwargs} not found!")
+                logging.debug(f"Gift promo code {kwargs} not found!")
                 return None
             rows = [dict(zip([key[0] for key in cur.description], row)) for row in rows]
             return rows
