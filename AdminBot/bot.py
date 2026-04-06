@@ -1589,12 +1589,9 @@ def callback_query(call: CallbackQuery):
             reply_markup=markups.main_menu_keyboard_markup()
         )
 
-    else:
-        bot.answer_callback_query(call.id, MESSAGES['ERROR_INVALID_COMMAND'])
-
     # ----------------------------------- Search User Area Callbacks -----------------------------------
     # Search User - Name Callback
-    if key == "search_name":
+    elif key == "search_name":
         bot.send_message(call.message.chat.id, MESSAGES['SEARCH_USER_NAME'],
                          reply_markup=markups.while_edit_user_markup())
         if value == "None":
@@ -2926,6 +2923,9 @@ def callback_query(call: CallbackQuery):
     
     elif key == "del_msg":
         bot.delete_message(call.message.chat.id, call.message.message_id)
+
+    else:
+        bot.answer_callback_query(call.id, MESSAGES['ERROR_INVALID_COMMAND'])
 
 
 
