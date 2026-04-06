@@ -1045,6 +1045,13 @@ def _build_singbox_outbound(line: str):
                     "type": "grpc",
                     "service_name": p["serviceName"],
                 }
+            elif p["network"] == "xhttp":
+                xhttp_t: dict = {"type": "xhttp", "path": p["wsPath"]}
+                # host header: prefer explicit host param, else use SNI domain
+                h = p["wsHost"] if p["wsHost"] and p["wsHost"] != p["server"] else p["sni"]
+                if h:
+                    xhttp_t["host"] = h
+                out["transport"] = xhttp_t
 
         elif p["security"] == "reality":
             tls = {
