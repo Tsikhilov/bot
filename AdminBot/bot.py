@@ -798,7 +798,7 @@ def users_bot_add_plan_description(message: Message):
                 if plan['server_id'] == int(add_plan_data['server_id']):
                         plans_list.append(plan)
         plans_markup = markups.plans_list_markup(plans_list,add_plan_data['server_id'])
-        bot.send_message(message.chat.id, {MESSAGES['USERS_BOT_PLANS_LIST']},
+        bot.send_message(message.chat.id, MESSAGES['USERS_BOT_PLANS_LIST'],
                          reply_markup=plans_markup)
 
 
@@ -1719,7 +1719,7 @@ def callback_query(call: CallbackQuery):
                     if plan['server_id'] == int(value):
                         plans_list.append(plan)
         plans_markup = markups.plans_list_markup(plans_list,value)
-        bot.edit_message_text({MESSAGES['USERS_BOT_PLANS_LIST']}, call.message.chat.id, call.message.message_id,
+        bot.edit_message_text(MESSAGES['USERS_BOT_PLANS_LIST'], call.message.chat.id, call.message.message_id,
                          reply_markup=plans_markup)
         
     elif key == "server_list_of_users":
@@ -2155,7 +2155,7 @@ def callback_query(call: CallbackQuery):
                         if plan['server_id'] == server_id:
                             plans_list.append(plan)
             plans_markup = markups.plans_list_markup(plans_list, server_id,delete_mode = True)
-            bot.edit_message_text({MESSAGES['USERS_BOT_SELECT_PLAN_TO_DELETE']}, call.message.chat.id, call.message.message_id,
+            bot.edit_message_text(MESSAGES['USERS_BOT_SELECT_PLAN_TO_DELETE'], call.message.chat.id, call.message.message_id,
                          reply_markup=plans_markup)
         else:
             bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
@@ -2170,7 +2170,7 @@ def callback_query(call: CallbackQuery):
                     if plan['server_id'] == int(value):
                         plans_list.append(plan)
         plans_markup = markups.plans_list_markup(plans_list,value,delete_mode = True)
-        bot.edit_message_text({MESSAGES['USERS_BOT_SELECT_PLAN_TO_DELETE']}, call.message.chat.id, call.message.message_id,
+        bot.edit_message_text(MESSAGES['USERS_BOT_SELECT_PLAN_TO_DELETE'], call.message.chat.id, call.message.message_id,
                          reply_markup=plans_markup)
 
     # Owner Info - Edit Owner Info Callback
@@ -2826,7 +2826,7 @@ def callback_query(call: CallbackQuery):
                     if plan['server_id'] == int(value):
                         plans_list.append(plan)
         plans_markup = markups.plans_list_markup(plans_list,value)
-        bot.edit_message_text({MESSAGES['USERS_BOT_PLANS_LIST']}, call.message.chat.id, call.message.message_id,
+        bot.edit_message_text(MESSAGES['USERS_BOT_PLANS_LIST'], call.message.chat.id, call.message.message_id,
                          reply_markup=plans_markup)
         
     elif key == "back_to_server_selected":
