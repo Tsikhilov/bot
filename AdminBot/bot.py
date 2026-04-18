@@ -2923,9 +2923,21 @@ def users_bot_management(message: Message):
 # Server Management Message Handler
 @bot.message_handler(func=lambda message: message.text == KEY_MARKUP['SERVERS_MANAGEMENT'])
 def servers_management(message: Message):
+    global URL, selected_server, server_mode
     servers = USERS_DB.select_servers()
-    bot.send_message(message.chat.id, KEY_MARKUP['SERVERS_MANAGEMENT'],
-                     reply_markup=markups.servers_management_markup(servers))
+    # Auto-select when there is exactly one server
+    if servers and len(servers) == 1:
+        server = servers[0]
+        URL = server['url'] + API_PATH
+        selected_server = server
+        server_mode = "Single"
+        plans = USERS_DB.select_plans()
+        msg = templates.server_info_template(server, plans)
+        bot.send_message(message.chat.id, msg,
+                         reply_markup=markups.server_selected_markup(str(server['id'])))
+    else:
+        bot.send_message(message.chat.id, KEY_MARKUP['SERVERS_MANAGEMENT'],
+                         reply_markup=markups.servers_management_markup(servers))
 
 # About Message Handler
 @bot.message_handler(func=lambda message: message.text == KEY_MARKUP['ABOUT_BOT'])
