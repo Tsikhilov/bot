@@ -118,8 +118,13 @@ def _check_expiry_notifications():
         all_server_rows = USERS_DB.select_servers() or []
         server_map = {s['id']: s for s in all_server_rows}
 
+        # Build order_id → telegram_id map
+        all_orders = USERS_DB.select_orders() or []
+        order_tg_map = {o['id']: o['telegram_id'] for o in all_orders if 'id' in o and 'telegram_id' in o}
+
         for sub in subs:
-            telegram_id = sub.get('telegram_id')
+            order_id = sub.get('order_id')
+            telegram_id = order_tg_map.get(order_id)
             uuid = sub.get('uuid')
             if not telegram_id or not uuid:
                 continue
