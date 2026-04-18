@@ -311,30 +311,30 @@ def users_bot_payments_management_markup(value=None):
 def users_bot_management_settings_markup(settings):
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
-    status_hyperlink = "✅" if settings['visible_hiddify_hyperlink'] else "❌"
-    status_three_rand = "✅" if settings['three_random_num_price'] else "❌"
-    status_panel_auto_backup = "✅" if settings['panel_auto_backup'] else "❌"
-    status_bot_auto_backup = "✅" if settings['bot_auto_backup'] else "❌"
-    status_force_join = "✅" if settings['force_join_channel'] else "❌"
-    status_buy_sub = "✅" if settings['buy_subscription_status'] else "❌"
-    status_renewal_sub = "✅" if settings['renewal_subscription_status'] else "❌"
+    status_hyperlink = "✅" if settings.get('visible_hiddify_hyperlink') else "❌"
+    status_three_rand = "✅" if settings.get('three_random_num_price') else "❌"
+    status_panel_auto_backup = "✅" if settings.get('panel_auto_backup') else "❌"
+    status_bot_auto_backup = "✅" if settings.get('bot_auto_backup') else "❌"
+    status_force_join = "✅" if settings.get('force_join_channel') else "❌"
+    status_buy_sub = "✅" if settings.get('buy_subscription_status') else "❌"
+    status_renewal_sub = "✅" if settings.get('renewal_subscription_status') else "❌"
 
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_SHOW_HIDI_LINK']} | {status_hyperlink}",
-                                    callback_data=f"users_bot_settings_hyperlink:{settings['visible_hiddify_hyperlink']}"))
+                                    callback_data=f"users_bot_settings_hyperlink:{settings.get('visible_hiddify_hyperlink')}"))
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_SHOW_THREE_RAND']} | {status_three_rand}",
-                                    callback_data=f"users_bot_settings_three_rand_price:{settings['three_random_num_price']}"))
+                                    callback_data=f"users_bot_settings_three_rand_price:{settings.get('three_random_num_price')}"))
     
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_BUY_SUBSCRIPTION_STATUS']} | {status_buy_sub}",
-                                    callback_data=f"users_bot_settings_buy_sub_status:{settings['buy_subscription_status']}"),
+                                    callback_data=f"users_bot_settings_buy_sub_status:{settings.get('buy_subscription_status')}"),
                InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_RENEWAL_SUBSCRIPTION_STATUS']} | {status_renewal_sub}",
-                                    callback_data= f"users_bot_settings_renewal_sub_status:{settings['renewal_subscription_status']}"))
+                                    callback_data= f"users_bot_settings_renewal_sub_status:{settings.get('renewal_subscription_status')}"))
     
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_CHANNEL_ّFORCE_JOIN']} | {status_force_join}",
-                                    callback_data=f"users_bot_settings_force_join:{settings['force_join_channel']}"),
+                                    callback_data=f"users_bot_settings_force_join:{settings.get('force_join_channel')}"),
                InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_CHANNEL_ID'],
                                     callback_data=f"users_bot_settings_channel_id:None"))
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_PANEL_AUTO_BACKUP']} | {status_panel_auto_backup}",
-                             callback_data=f"users_bot_settings_panel_auto_backup:{settings['panel_auto_backup']}"),)
+                             callback_data=f"users_bot_settings_panel_auto_backup:{settings.get('panel_auto_backup')}"),)
             #    InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_BOT_AUTO_BACKUP']} | {status_bot_auto_backup}",
             #                         callback_data=f"users_bot_settings_bot_auto_backup:{settings['bot_auto_backup']}")
             #    )
@@ -352,7 +352,7 @@ def users_bot_management_settings_markup(settings):
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_NOTIF_REMINDER'],
                                     callback_data=f"users_bot_settings_notif_reminder_menu:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_MIN_DEPO'],
-                                    callback_data=f"users_bot_settings_min_depo:{settings['min_deposit_amount']}"))
+                                    callback_data=f"users_bot_settings_min_depo:{settings.get('min_deposit_amount', 0)}"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RENEWAL_METHOD'],
                                     callback_data=f"users_bot_settings_renewal_method_menu:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RESET_FREE_TEST_LIMIT'],
@@ -370,11 +370,11 @@ def users_bot_management_settings_renewal_method_markup(settings):
     markup.row_width = 3
     default, advanced, fairly = "❌", "❌", "❌"
     
-    if settings['renewal_method'] == 1:
+    if settings.get('renewal_method') == 1:
         default = "✅"
-    elif settings['renewal_method'] == 2:
+    elif settings.get('renewal_method') == 2:
         advanced = "✅"
-    elif settings['renewal_method'] == 3:
+    elif settings.get('renewal_method') == 3:
         fairly = "✅"
         
         
@@ -386,7 +386,7 @@ def users_bot_management_settings_renewal_method_markup(settings):
                       callback_data=f"users_bot_settings_renewal_method:3"),
     )
                
-    if settings['renewal_method'] == 2:
+    if settings.get('renewal_method') == 2:
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RENEWAL_METHOD_ADVANCED_DAYS'],
                                         callback_data=f"users_bot_settings_renewal_method_advanced_days:None"))
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RENEWAL_METHOD_ADVANCED_USAGE'],
@@ -398,10 +398,10 @@ def users_bot_management_settings_renewal_method_markup(settings):
 def users_bot_management_settings_test_sub_markup(settings):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    status_test_sub = "✅" if settings['test_subscription'] else "❌"
+    status_test_sub = "✅" if settings.get('test_subscription') else "❌"
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_TEST_SUB']} | {status_test_sub}",
                                     callback_data=f"users_bot_settings_test_sub:test_subscription"))
-    if settings['test_subscription']:
+    if settings.get('test_subscription'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_TEST_SUB_SIZE'],
                                         callback_data=f"users_bot_settings_test_sub_size:None"))
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_TEST_SUB_DAYS'],
@@ -413,10 +413,10 @@ def users_bot_management_settings_test_sub_markup(settings):
 def users_bot_management_settings_notif_reminder_markup(settings):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    status_test_sub = "✅" if settings['reminder_notification'] else "❌"
+    status_test_sub = "✅" if settings.get('reminder_notification') else "❌"
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_NOTIF_REMINDER']} | {status_test_sub}",
                                     callback_data=f"users_bot_settings_notif_reminder:reminder_notification"))
-    if settings['reminder_notification']:
+    if settings.get('reminder_notification'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_NOTIF_REMINDER_USAGE'],
                                         callback_data=f"users_bot_settings_notif_reminder_usage:None"))
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_NOTIF_REMINDER_DAYS'],
@@ -429,14 +429,14 @@ def users_bot_management_settings_visible_sub_markup(settings):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
 
-    status_visible_conf_dir = "✅" if settings['visible_conf_dir'] else "❌"
-    status_conf_sub_auto = "✅" if settings['visible_conf_sub_auto'] else "❌"
-    status_conf_sub_url = "✅" if settings['visible_conf_sub_url'] else "❌"
-    status_conf_sub_url_b64 = "✅" if settings['visible_conf_sub_url_b64'] else "❌"
-    status_conf_clash = "✅" if settings['visible_conf_clash'] else "❌"
-    status_conf_hiddify = "✅" if settings['visible_conf_hiddify'] else "❌"
-    status_conf_sub_sing_box = "✅" if settings['visible_conf_sub_sing_box'] else "❌"
-    status_conf_sub_full_sing_box = "✅" if settings['visible_conf_sub_full_sing_box'] else "❌"
+    status_visible_conf_dir = "✅" if settings.get('visible_conf_dir') else "❌"
+    status_conf_sub_auto = "✅" if settings.get('visible_conf_sub_auto') else "❌"
+    status_conf_sub_url = "✅" if settings.get('visible_conf_sub_url') else "❌"
+    status_conf_sub_url_b64 = "✅" if settings.get('visible_conf_sub_url_b64') else "❌"
+    status_conf_clash = "✅" if settings.get('visible_conf_clash') else "❌"
+    status_conf_hiddify = "✅" if settings.get('visible_conf_hiddify') else "❌"
+    status_conf_sub_sing_box = "✅" if settings.get('visible_conf_sub_sing_box') else "❌"
+    status_conf_sub_full_sing_box = "✅" if settings.get('visible_conf_sub_full_sing_box') else "❌"
 
     markup.add(InlineKeyboardButton(f"{KEY_MARKUP['CONFIGS_DIR']} | {status_visible_conf_dir}",
                                     callback_data=f"users_bot_settings_visible_sub:visible_conf_dir"))
@@ -480,7 +480,7 @@ def users_bot_management_settings_faq_markup():
     settings = all_configs_settings()
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_SET_FAQ_MESSAGE'],
                                     callback_data=f"users_bot_settings_set_faq_msg:None"))
-    if settings['msg_faq']:
+    if settings.get('msg_faq'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_HIDE_FAQ'],
                                     callback_data=f"users_bot_settings_hide_faq:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"users_bot_settings:None"))
