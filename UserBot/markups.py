@@ -243,3 +243,119 @@ def payment_method_selection_markup():
     markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_METHOD_YOOKASSA'], callback_data=f"yookassa_payment:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"del_msg:None"))
     return markup
+
+
+def velvet_vpn_subscriptions_markup(subscriptions):
+    """List of user VPN subscriptions with a button to get a new one."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    for sub in subscriptions:
+        uuid = sub['uuid']
+        days = sub['remaining_day']
+        icon = "🟢" if sub.get('active') else "🔴"
+        label = f"{icon} {uuid[:8]}… — {days} д."
+        markup.add(InlineKeyboardButton(label, callback_data=f"velvet_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['GET_NEW_SUBSCRIPTION'], callback_data="buy_subscription:None"))
+    return markup
+
+
+def velvet_referral_markup(ref_link):
+    """Referral panel: open link, gift VPN, view purchased gifts."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton(KEY_MARKUP['COPY_REF_LINK'], url=ref_link))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['GIFT_VPN'], callback_data="velvet_gift:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BOUGHT_GIFTS'], callback_data="velvet_bought_gifts:None"))
+    return markup
+
+
+def velvet_help_markup(support_username=None):
+    """Help/support panel: setup guides, support contact."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton(KEY_MARKUP['CANT_CONNECT'], callback_data="msg_manual:android"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_ANDROID'], callback_data="msg_manual:android"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_IOS'], callback_data="msg_manual:ios"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_WIN'], callback_data="msg_manual:win"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_MAC'], callback_data="msg_manual:mac"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_LIN'], callback_data="msg_manual:lin"))
+    if support_username:
+        username = support_username.lstrip('@')
+        markup.add(InlineKeyboardButton(KEY_MARKUP['WRITE_TO_SUPPORT'], url=f"https://t.me/{username}"))
+    return markup
+
+
+def velvet_about_markup():
+    """About service panel: reviews, policies, support, status, channel."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton(KEY_MARKUP['REVIEWS'], callback_data="velvet_info:reviews"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['PRIVACY_POLICY'], callback_data="velvet_info:privacy"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['USER_AGREEMENT'], callback_data="velvet_info:agreement"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['PERSONAL_DATA_POLICY'], callback_data="velvet_info:pd"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['SUPPORT'], callback_data="velvet_info:support"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['SYSTEM_STATUS'], callback_data="velvet_info:status"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['CHANNEL'], callback_data="velvet_info:channel"))
+    return markup
+
+
+def velvet_subscription_actions_markup(uuid, home_link=None):
+    """Actions for a specific VPN subscription card."""
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton(KEY_MARKUP['SETUP_VPN'], callback_data=f"velvet_setup:{uuid}"),
+        InlineKeyboardButton(KEY_MARKUP['DEVICES'], callback_data=f"velvet_devices:0|{uuid}"),
+    )
+    markup.add(
+        InlineKeyboardButton(KEY_MARKUP['PARAMETERS'], callback_data=f"velvet_params:{uuid}"),
+        InlineKeyboardButton(KEY_MARKUP['LTE_TRAFFIC_PAYMENT'], callback_data=f"velvet_lte:{uuid}"),
+    )
+    markup.add(InlineKeyboardButton(KEY_MARKUP['PAY_SUBSCRIPTION'], callback_data=f"renewal_subscription:{uuid}"))
+    if home_link:
+        markup.add(InlineKeyboardButton("🌐 Hiddify App", url=home_link))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="velvet_vpn_menu:None"))
+    return markup
+
+
+def velvet_setup_markup(uuid, home_link=None):
+    """Setup guide: manual setup or confirm done."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton(KEY_MARKUP['MANUAL_SETUP'], callback_data=f"velvet_manual:{uuid}"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['CANT_CONNECT'], callback_data=f"velvet_support:{uuid}"))
+    if home_link:
+        markup.add(InlineKeyboardButton("🌐 Hiddify App", url=home_link))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['SETUP_DONE'], callback_data=f"velvet_done:{uuid}"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
+
+
+def velvet_devices_markup(uuid, page, total_pages):
+    """Devices list with pagination and back button."""
+    markup = InlineKeyboardMarkup(row_width=2)
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(KEY_MARKUP['PREV_PAGE'], callback_data=f"velvet_devices:{page - 1}|{uuid}")
+        )
+    if page < total_pages - 1:
+        nav_buttons.append(
+            InlineKeyboardButton(KEY_MARKUP['NEXT_PAGE'], callback_data=f"velvet_devices:{page + 1}|{uuid}")
+        )
+    if nav_buttons:
+        markup.add(*nav_buttons)
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
+
+
+def velvet_lte_packages_markup(uuid):
+    """LTE white-list traffic packages for purchase."""
+    markup = InlineKeyboardMarkup(row_width=1)
+    packages = [
+        ("1 ГБ", 1, 49),
+        ("5 ГБ", 5, 199),
+        ("10 ГБ", 10, 349),
+        ("30 ГБ", 30, 899),
+    ]
+    for label, gb, price in packages:
+        markup.add(InlineKeyboardButton(
+            f"{label} — {price} ₽",
+            callback_data=f"velvet_lte_buy:{uuid}|{gb}|{price}"
+        ))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"velvet_sub_open:{uuid}"))
+    return markup
