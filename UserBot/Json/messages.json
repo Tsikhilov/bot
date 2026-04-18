@@ -129,7 +129,8 @@
     "VELVET_INFO_SUPPORT": "🛟Поддержка: {support}",
     "VELVET_INFO_STATUS": "📊Статус системы: {status_link}",
     "VELVET_INFO_CHANNEL": "📣Канал: {channel_link}",
-    "VELVET_LTE_TOPUP_NOTIFY": "Пополните баланс и напишите в поддержку, чтобы активировать LTE-пакет."
+    "VELVET_LTE_TOPUP_NOTIFY": "Пополните баланс и напишите в поддержку, чтобы активировать LTE-пакет.",
+    "VELVET_SETUP_DONE": "✅ Отлично! Подписка настроена. Если понадобится помощь — нажмите «🆘Помощь»."
   },
   "EN": {
     "WELCOME": "Welcome"

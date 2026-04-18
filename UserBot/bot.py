@@ -264,10 +264,6 @@ def _render_subscription_details(uuid):
     if not server_url:
         return None
 
-    all_subs = utils.order_user_info(0) if False else []
-    del all_subs
-
-    # Search the selected subscription among all known subscriptions for current user is done in caller.
     user_raw = api.find(server_url, uuid=uuid)
     user_info = utils.users_to_dict([user_raw]) if user_raw else None
     processed = utils.dict_process(server_url, user_info) if user_info else None
@@ -316,24 +312,19 @@ def buy_from_wallet_confirm(message: Message, plan):
 
 
 def renewal_from_wallet_confirm(message: Message):
-    if not renew_subscription_dict:
+    user_renew = renew_subscription_dict.get(message.chat.id)
+    if not user_renew:
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                          reply_markup=main_menu_keyboard_markup())
         return
 
-    if not renew_subscription_dict[message.chat.id]:
+    if not user_renew.get('plan_id') or not user_renew.get('uuid'):
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                          reply_markup=main_menu_keyboard_markup())
         return
 
-    if not renew_subscription_dict[message.chat.id]['plan_id'] or not renew_subscription_dict[message.chat.id][
-        'uuid']:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
-
-    uuid = renew_subscription_dict[message.chat.id]['uuid']
-    plan_id = renew_subscription_dict[message.chat.id]['plan_id']
+    uuid = user_renew['uuid']
+    plan_id = user_renew['plan_id']
 
     wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
     if not wallet:
@@ -1115,21 +1106,30 @@ def _handle_callback_query(call: CallbackQuery):
             bot.register_next_step_handler(call.message, next_step_send_name_for_get_free_test, value)
     # Send Asked Plan Info
     elif key == 'plan_selected':
-        plan = USERS_DB.find_plan(id=value)[0]
-        if not plan:
-            bot.send_message(call.message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES.get('PLANS_NOT_FOUND', MESSAGES['UNKNOWN_ERROR']),
                              reply_markup=main_menu_keyboard_markup())
             return
+        plan = plan_rows[0]
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                               text=plan_info_template(plan),
                               reply_markup=confirm_buy_plan_markup(plan['id']))
 
     # Confirm To Buy From Wallet
     elif key == 'confirm_buy_from_wallet':
-        plan = USERS_DB.find_plan(id=value)[0]
-        buy_from_wallet_confirm(call.message, plan)
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES.get('PLANS_NOT_FOUND', MESSAGES['UNKNOWN_ERROR']),
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        buy_from_wallet_confirm(call.message, plan_rows[0])
     elif key == 'confirm_renewal_from_wallet':
-        plan = USERS_DB.find_plan(id=value)[0]
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES.get('PLANS_NOT_FOUND', MESSAGES['UNKNOWN_ERROR']),
+                             reply_markup=main_menu_keyboard_markup())
+            return
         renewal_from_wallet_confirm(call.message)
 
     # Ask To Send Screenshot
@@ -1230,11 +1230,12 @@ def _handle_callback_query(call: CallbackQuery):
                                       reply_markup=plans_list_markup(plans, renewal=True,uuid=user_info_process['uuid']))
 
     elif key == 'renewal_plan_selected':
-        plan = USERS_DB.find_plan(id=value)[0]
-        if not plan:
-            bot.send_message(call.message.chat.id, MESSAGES['PLANS_NOT_FOUND'],
+        plan_rows = USERS_DB.find_plan(id=value)
+        if not plan_rows:
+            bot.send_message(call.message.chat.id, MESSAGES.get('PLANS_NOT_FOUND', MESSAGES['UNKNOWN_ERROR']),
                              reply_markup=main_menu_keyboard_markup())
             return
+        plan = plan_rows[0]
         renew_subscription_dict[call.message.chat.id]['plan_id'] = plan['id']
         bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                               text=plan_info_template(plan),
@@ -1500,7 +1501,7 @@ def _handle_callback_query(call: CallbackQuery):
         bot.send_message(call.message.chat.id, MESSAGES['SEND_TICKET_TO_ADMIN_TEMPLATE'], reply_markup=send_ticket_to_admin())
 
     elif key == "velvet_done":
-        bot.send_message(call.message.chat.id, "✅Отлично! Если понадобится помощь, нажмите «🆘Помощь».", reply_markup=main_menu_keyboard_markup())
+        bot.send_message(call.message.chat.id, MESSAGES.get('VELVET_SETUP_DONE', '✅ Отлично! Если понадобится помощь, нажмите «🆘Помощь».'), reply_markup=main_menu_keyboard_markup())
 
     elif key == "velvet_params":
         bot.edit_message_text(
@@ -1626,7 +1627,7 @@ def _handle_callback_query(call: CallbackQuery):
         servers = USERS_DB.select_servers()
         server_list = []
         if not servers:
-            bot.send_message(message.chat.id, MESSAGES['SERVERS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
+            bot.send_message(call.message.chat.id, MESSAGES['SERVERS_NOT_FOUND'], reply_markup=main_menu_keyboard_markup())
             return
         for server in servers:
             user_index = 0
