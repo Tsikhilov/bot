@@ -553,8 +553,8 @@ def next_step_send_ticket_to_admin(message):
                                    reply_markup=answer_to_user_markup(bot_user,message.chat.id))
         except Exception as e:
             logging.warning("admin_bot notify ticket failed for %s: %s", ADMIN, e)
-        bot.send_message(message.chat.id, MESSAGES['SEND_TICKET_TO_ADMIN_RESPONSE'],
-                            reply_markup=main_menu_keyboard_markup())
+    bot.send_message(message.chat.id, MESSAGES['SEND_TICKET_TO_ADMIN_RESPONSE'],
+                        reply_markup=main_menu_keyboard_markup())
 
 
 
@@ -1764,6 +1764,15 @@ def about_command(message: Message):
     bot.send_message(message.chat.id, MESSAGES['VELVET_ABOUT_TEXT'], reply_markup=velvet_about_markup())
 
 
+@bot.message_handler(commands=['wallet'])
+def wallet_command(message: Message):
+    if is_user_banned(message.chat.id):
+        return
+    if not is_user_in_channel(message.chat.id):
+        return
+    wallet_balance(message)
+
+
 @bot.message_handler(func=lambda message: message.text == KEY_MARKUP['MAIN_MENU'])
 def main_menu_button(message: Message):
     if is_user_banned(message.chat.id):
@@ -1951,8 +1960,9 @@ def wallet_balance(message: Message):
         wallet = wallet[0]
         telegram_user_data = wallet_info_template(wallet['balance'])
 
+        markup = payment_method_selection_markup() if yookassa_client else wallet_info_markup()
         bot.send_message(message.chat.id, telegram_user_data,
-                         reply_markup=wallet_info_markup())
+                         reply_markup=markup)
     else:
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
 
@@ -2023,11 +2033,12 @@ def start():
 
     try:
         bot.set_my_commands([
-            telebot.types.BotCommand("/start", BOT_COMMANDS['START']),
-            telebot.types.BotCommand("/subscriptions", BOT_COMMANDS['SUBSCRIPTIONS']),
-            telebot.types.BotCommand("/referral", BOT_COMMANDS['REFERRAL']),
-            telebot.types.BotCommand("/help", BOT_COMMANDS['HELP']),
-            telebot.types.BotCommand("/about", BOT_COMMANDS['ABOUT']),
+            telebot.types.BotCommand("/start", BOT_COMMANDS.get('START', 'start')),
+            telebot.types.BotCommand("/subscriptions", BOT_COMMANDS.get('SUBSCRIPTIONS', 'Subscriptions')),
+            telebot.types.BotCommand("/wallet", BOT_COMMANDS.get('WALLET', 'Wallet')),
+            telebot.types.BotCommand("/referral", BOT_COMMANDS.get('REFERRAL', 'Referral')),
+            telebot.types.BotCommand("/help", BOT_COMMANDS.get('HELP', 'Help')),
+            telebot.types.BotCommand("/about", BOT_COMMANDS.get('ABOUT', 'About')),
         ])
     except telebot.apihelper.ApiTelegramException as e:
         if e.result.status_code == 401:

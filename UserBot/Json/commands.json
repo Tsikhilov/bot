@@ -1,8 +1,26 @@
 {
+    "RU": {
+        "START": "Начать",
+        "SUBSCRIPTIONS": "Мои подписки",
+        "WALLET": "Кошелёк",
+        "REFERRAL": "Реферальная программа",
+        "HELP": "Помощь",
+        "ABOUT": "О сервисе"
+    },
     "EN": {
-        "START": "start"
+        "START": "start",
+        "SUBSCRIPTIONS": "My subscriptions",
+        "WALLET": "Wallet",
+        "REFERRAL": "Referral program",
+        "HELP": "Help",
+        "ABOUT": "About"
     },
     "FA": {
-        "START": "شروع"
+        "START": "شروع",
+        "SUBSCRIPTIONS": "اشتراک‌های من",
+        "WALLET": "کیف پول",
+        "REFERRAL": "برنامه ارجاع",
+        "HELP": "کمک",
+        "ABOUT": "درباره"
     }
 }
