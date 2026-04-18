@@ -484,8 +484,13 @@ def next_step_send_screenshot(message, charge_wallet):
         bot.register_next_step_handler(message, next_step_send_screenshot, charge_wallet)
         return
 
-    file_info = bot.get_file(message.photo[-1].file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+    try:
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+    except Exception as e:
+        logging.warning(f"Screenshot download failed for {message.chat.id}: {e}")
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=cancel_markup())
+        return
     file_name = f"{message.chat.id}-{charge_wallet['id']}.jpg"
     path_recp = os.path.join(os.getcwd(), 'UserBot', 'Receiptions', file_name)
     if not os.path.exists(os.path.join(os.getcwd(), 'UserBot', 'Receiptions')):
@@ -527,8 +532,10 @@ def next_step_answer_to_admin(message, admin_id):
     if is_it_cancel(message):
         return
     bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
-    if bot_users:
-        bot_user = bot_users[0]
+    if not bot_users:
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'], reply_markup=main_menu_keyboard_markup())
+        return
+    bot_user = bot_users[0]
     admin_bot.send_message(int(admin_id), f"{MESSAGES['NEW_TICKET_RECEIVED']}\n{MESSAGES['TICKET_TEXT']} {message.text}",
                            reply_markup=answer_to_user_markup(bot_user,message.chat.id))
     bot.send_message(message.chat.id, MESSAGES['SEND_TICKET_TO_ADMIN_RESPONSE'],
