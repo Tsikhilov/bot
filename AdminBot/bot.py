@@ -18,6 +18,9 @@ from Database.dbManager import USERS_DB
 from Utils import api
 from config import panel_url_validator, API_PATH
 
+import subprocess
+import threading
+
 # YooKassa Settings Functions
 def yookassa_set_shop_id(message: Message):
     if message.text == KEY_MARKUP['CANCEL']:
@@ -56,6 +59,23 @@ def yookassa_set_secret_key(message: Message):
         bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'], reply_markup=markups.main_menu_keyboard_markup())
 
 
+# CryptoPay Settings Functions
+def cryptopay_set_token(message: Message):
+    if message.text == KEY_MARKUP['CANCEL']:
+        bot.send_message(message.chat.id, MESSAGES['CANCELED'], reply_markup=markups.main_menu_keyboard_markup())
+        return
+    token = message.text.strip()
+    if not token:
+        bot.send_message(message.chat.id, MESSAGES['ERROR_INVALID_COMMAND'], reply_markup=markups.main_menu_keyboard_markup())
+        return
+
+    from Utils.cryptopay import save_cryptopay_settings
+    if save_cryptopay_settings(USERS_DB, token):
+        bot.send_message(message.chat.id, "✅ CryptoPay API Token сохранён.", reply_markup=markups.main_menu_keyboard_markup())
+    else:
+        bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'], reply_markup=markups.main_menu_keyboard_markup())
+
+
 def _set_bool_config(key, value):
     USERS_DB.add_bool_config(key, value)
     return USERS_DB.edit_bool_config(key, value=value)
@@ -84,11 +104,7 @@ def pally_set_url(message: Message):
 
 
 # Initialize Bot
-bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode="HTML")
-try:
-    bot.remove_webhook()
-except Exception as e:
-    logging.warning(f"Failed to remove admin bot webhook during init: {e}")
+bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode="HTML", num_threads=4)
 
 URL = 'url'
 selected_server = None
@@ -101,6 +117,48 @@ selected_telegram_id = "0"
 
 if CLIENT_TOKEN:
     user_bot = user_bot()
+
+# ----------------------------------- Autotune Async Runner -----------------------------------
+def _run_autotune_async(chat_id, mode):
+    """Run autotune in background thread and send results to admin."""
+    PYTHON_BIN = "/opt/SmartKamaVPN/.venv/bin/python"
+    SCRIPT = "/opt/SmartKamaVPN/scripts/server_autotune_stack.py"
+
+    args_map = {
+        "full": ["--full"],
+        "guard": ["--run-guard", "--guard-mode", "all"],
+        "network": ["--apply-network"],
+    }
+    cmd = [PYTHON_BIN, SCRIPT] + args_map.get(mode, ["--full"])
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        output = (proc.stdout or "")[-2000:]
+        status = "✅ Успешно" if proc.returncode == 0 else f"❌ Код: {proc.returncode}"
+        stderr_tail = (proc.stderr or "")[-500:]
+        msg = f"🔧 <b>Autotune [{mode}]</b>\n{status}\n\n<pre>{html.escape(output)}</pre>"
+        if proc.returncode != 0 and stderr_tail:
+            msg += f"\n<pre>{html.escape(stderr_tail)}</pre>"
+    except subprocess.TimeoutExpired:
+        msg = "🔧 <b>Autotune</b>\n❌ Таймаут (10 мин)"
+    except Exception as e:
+        msg = f"🔧 <b>Autotune</b>\n❌ Ошибка: {html.escape(str(e))}"
+
+    try:
+        bot.send_message(chat_id, msg[:4000])
+    except Exception:
+        pass
+
+# ----------------------------------- Status Channel Setting -----------------------------------
+def set_status_channel_id(message: Message):
+    if is_it_cancel(message):
+        return
+    channel_id = message.text.strip()
+    USERS_DB.add_str_config("status_channel_id", channel_id)
+    USERS_DB.edit_str_config("status_channel_id", value=channel_id)
+    bot.send_message(message.chat.id, f"✅ Канал статуса: {html.escape(channel_id)}",
+                     reply_markup=markups.main_menu_keyboard_markup())
+
 # ----------------------------------- Helper Functions -----------------------------------
 # Check if message is digit
 def is_it_digit(message: Message, allow_float=False, response=MESSAGES['ERROR_INVALID_NUMBER'],
@@ -290,7 +348,8 @@ def edit_user_comment(message: Message, uuid):
     if not status:
         bot.send_message(message.chat.id, MESSAGES['ERROR_UNKNOWN'], reply_markup=markups.main_menu_keyboard_markup())
         return
-    bot.send_message(message.chat.id, f"{MESSAGES['SUCCESS_USER_COMMENT_EDITED']} {message.text} ",
+    display_comment = message.text[:3500] if message.text else ""
+    bot.send_message(message.chat.id, f"{MESSAGES['SUCCESS_USER_COMMENT_EDITED']} {display_comment} ",
                      reply_markup=markups.main_menu_keyboard_markup())
 
 
@@ -384,6 +443,7 @@ def all_server_search_user_name(message: Message):
 # All Servers Search User - UUID
 def all_server_search_user_uuid(message: Message):
     selected_server = None
+    user = None
     if is_it_cancel(message):
         return
     msg_wait = bot.send_message(message.chat.id, MESSAGES['WAIT'], reply_markup=markups.while_edit_user_markup())
@@ -410,6 +470,7 @@ def all_server_search_user_uuid(message: Message):
 # All Servers Search User - Config
 def all_server_search_user_config(message: Message):
     selected_server = None
+    user = None
     if is_it_cancel(message):
         return
     msg_wait = bot.send_message(message.chat.id, MESSAGES['WAIT'], reply_markup=markups.while_edit_user_markup())
@@ -432,6 +493,38 @@ def all_server_search_user_config(message: Message):
                      reply_markup=markups.user_info_markup(user['uuid']))
 
 # ----------------------------------- Users Bot Search Area -----------------------------------
+
+def _admin_test_deeplink_step(message: Message):
+    """7.1 — Generate and send test deeplinks for the given subscription UUID."""
+    if is_it_cancel(message):
+        return
+    uuid = (message.text or "").strip()
+    if not uuid:
+        bot.send_message(message.chat.id, "❌ UUID не указан.")
+        return
+    from urllib.parse import quote as _quote
+    sub_url = f"https://sub.smartkamavpn.com/sub/{uuid}"
+    happ_android = f"v2raytun://install-config?url={_quote(sub_url, safe='')}"
+    happ_ios = f"hiddify://import?url={_quote(sub_url, safe='')}"
+    singbox_dl = f"singbox://import-remote-profile?url={_quote(sub_url, safe='')}&name=SmartKamaVPN"
+    clash_dl = f"clash://install-config?url={_quote(sub_url, safe='')}"
+
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    mu = InlineKeyboardMarkup(row_width=1)
+    mu.add(InlineKeyboardButton("⚡ Happ Android (v2raytun://)", url=happ_android))
+    mu.add(InlineKeyboardButton("⚡ Happ iOS (hiddify://)", url=happ_ios))
+    mu.add(InlineKeyboardButton("📦 Sing-box", url=singbox_dl))
+    mu.add(InlineKeyboardButton("🦊 Clash Meta", url=clash_dl))
+
+    bot.send_message(
+        message.chat.id,
+        f"🔗 <b>Тест deeplink</b>\n\nUUID: <code>{uuid}</code>\n\nСсылка подписки:\n<code>{sub_url}</code>\n\nНажмите кнопку для проверки:",
+        parse_mode="HTML",
+        reply_markup=mu,
+        disable_web_page_preview=True,
+    )
+
+
 # User Bot Search  - Name
 def search_bot_user_name(message: Message):
     global searched_name
@@ -1205,6 +1298,119 @@ def users_bot_send_message_to_user(message: Message, telegram_id):
     bot.send_message(message.chat.id, MESSAGES['MESSAGE_SENDED'],
                         reply_markup=markups.main_menu_keyboard_markup())
     
+
+# ----------------------------------- MTProto Proxy step handlers -----------------------------------
+def _admin_mtproto_set_server(message: Message):
+    if is_it_cancel(message):
+        return
+    import re
+    ip = message.text.strip()
+    if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+        bot.send_message(message.chat.id, "❌ Неверный формат IP. Пример: 72.56.100.45",
+                         reply_markup=markups.main_menu_keyboard_markup())
+        return
+    USERS_DB.add_str_config(key="mtproto_server", value=ip)
+    USERS_DB.edit_str_config("mtproto_server", value=ip)
+    import config as _cfg
+    _cfg.MTPROTO_SERVER = ip
+    bot.send_message(message.chat.id, f"✅ Сервер MTProto установлен: <code>{ip}</code>",
+                     reply_markup=markups.mtproto_proxy_settings_markup(), parse_mode="HTML")
+
+
+def _admin_mtproto_set_port(message: Message):
+    if is_it_cancel(message):
+        return
+    try:
+        port = int(message.text.strip())
+        if not (1 <= port <= 65535):
+            raise ValueError
+    except (ValueError, TypeError):
+        bot.send_message(message.chat.id, "❌ Порт должен быть числом от 1 до 65535",
+                         reply_markup=markups.main_menu_keyboard_markup())
+        return
+    USERS_DB.add_str_config(key="mtproto_port", value=str(port))
+    USERS_DB.edit_str_config("mtproto_port", value=str(port))
+    import config as _cfg
+    _cfg.MTPROTO_PORT = port
+    bot.send_message(message.chat.id, f"✅ Порт MTProto установлен: <code>{port}</code>",
+                     reply_markup=markups.mtproto_proxy_settings_markup(), parse_mode="HTML")
+
+
+def _admin_mtproto_set_secret(message: Message):
+    if is_it_cancel(message):
+        return
+    secret = message.text.strip()
+    if len(secret) < 32:
+        bot.send_message(message.chat.id, "❌ Секрет слишком короткий (минимум 32 символа)",
+                         reply_markup=markups.main_menu_keyboard_markup())
+        return
+    USERS_DB.add_str_config(key="mtproto_secret", value=secret)
+    USERS_DB.edit_str_config("mtproto_secret", value=secret)
+    import config as _cfg
+    _cfg.MTPROTO_SECRET = secret
+    bot.send_message(
+        message.chat.id,
+        f"✅ Секрет MTProto установлен: <code>{secret[:12]}...</code>",
+        reply_markup=markups.mtproto_proxy_settings_markup(),
+        parse_mode="HTML",
+    )
+
+
+def _admin_mtproto_set_promote(message: Message):
+    if is_it_cancel(message):
+        return
+    tag = message.text.strip()
+    if tag == "-":
+        tag = ""
+    USERS_DB.add_str_config(key="mtproto_promote_tag", value=tag)
+    USERS_DB.edit_str_config("mtproto_promote_tag", value=tag)
+    import config as _cfg
+    _cfg.MTPROTO_PROMOTE_TAG = tag
+    bot.send_message(
+        message.chat.id,
+        f"✅ Promote tag {'сброшен' if not tag else f'установлен: <code>{tag}</code>'}",
+        reply_markup=markups.mtproto_proxy_settings_markup(),
+        parse_mode="HTML",
+    )
+
+
+# ----------------------------------- WhatsApp Proxy step handlers -----------------------------------
+def _admin_wa_proxy_set_server(message: Message):
+    if is_it_cancel(message):
+        return
+    import re
+    ip = message.text.strip()
+    if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+        bot.send_message(message.chat.id, "❌ Неверный формат IP. Пример: 72.56.100.45",
+                         reply_markup=markups.main_menu_keyboard_markup())
+        return
+    USERS_DB.add_str_config(key="whatsapp_proxy_server", value=ip)
+    USERS_DB.edit_str_config("whatsapp_proxy_server", value=ip)
+    import config as _cfg
+    _cfg.WHATSAPP_PROXY_SERVER = ip
+    bot.send_message(message.chat.id, f"✅ Сервер WhatsApp Proxy установлен: <code>{ip}</code>",
+                     reply_markup=markups.whatsapp_proxy_settings_markup(), parse_mode="HTML")
+
+
+# ----------------------------------- Signal Proxy step handlers -----------------------------------
+def _admin_signal_proxy_set_domain(message: Message):
+    if is_it_cancel(message):
+        return
+    import re
+    domain = message.text.strip().lower()
+    # Basic domain validation – no IP, must have a dot
+    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", domain) or "." not in domain:
+        bot.send_message(message.chat.id, "❌ Введите доменное имя, а не IP. Пример: signal.example.com",
+                         reply_markup=markups.main_menu_keyboard_markup())
+        return
+    USERS_DB.add_str_config(key="signal_proxy_domain", value=domain)
+    USERS_DB.edit_str_config("signal_proxy_domain", value=domain)
+    import config as _cfg
+    _cfg.SIGNAL_PROXY_DOMAIN = domain
+    bot.send_message(message.chat.id, f"✅ Домен Signal Proxy установлен: <code>{domain}</code>",
+                     reply_markup=markups.signal_proxy_settings_markup(), parse_mode="HTML")
+
+
 # ----------------------------------- Callbacks -----------------------------------
 # Callback Handler for Inline Buttons
 @bot.callback_query_handler(func=lambda call: True)
@@ -1225,7 +1431,9 @@ def callback_query(call: CallbackQuery):
     # Split Callback Data to Key(Command) and UUID
     data = call.data.split(':')
     key = data[0]
-    value = data[1]
+    if key == "noop":
+        return
+    value = data[1] if len(data) > 1 else "None"
     global URL
     #Single , Single_name , Single_expired , All_server_name , All_server_expired
     global search_mode
@@ -1270,11 +1478,41 @@ def callback_query(call: CallbackQuery):
         bot.send_message(call.message.chat.id, msg,
                         reply_markup=markups.user_info_markup(usr['uuid']))
 
+    # Device Connections for a User Callback
+    elif key == "user_devices":
+        uuid = value
+        # Look up devices by UUID (sub_uuid in shortlink) — also try sub_id from Marzban
+        devices = USERS_DB.get_devices_by_sub(uuid)
+        # Also try to find by the Marzban sub token (shorter identifier)
+        if not devices:
+            # Try looking up all subs matching this uuid prefix
+            all_devs = USERS_DB.get_all_devices()
+            devices = [d for d in all_devs if uuid[:8] in d.get("sub_uuid", "")]
+        usr_name = uuid[:12]
+        try:
+            usr = utils.user_info(URL, uuid)
+            if usr:
+                usr_name = usr.get('name', uuid[:12])
+        except Exception:
+            pass
+        msg = templates.device_connections_template(devices, sub_name=usr_name)
+        bot.send_message(call.message.chat.id, msg,
+                        reply_markup=markups.user_info_markup(uuid))
+
+    # Device Stats Global Callback
+    elif key == "device_stats":
+        stats = USERS_DB.get_device_stats()
+        all_devs = USERS_DB.get_all_devices()
+        msg = templates.device_stats_template(stats, total_devices=len(all_devs))
+        bot.send_message(call.message.chat.id, msg)
 
     # Next Page Callback
     elif key == "next":
         # users_list = utils.dict_process(utils.users_to_dict(ADMIN_DB.select_users()))
         users_list = []
+        if not selected_server:
+            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
+            return
         server_id = selected_server['id']
         if search_mode == "Single":
             users_list = api.select(URL)
@@ -1687,6 +1925,25 @@ def callback_query(call: CallbackQuery):
         bot.send_message(call.message.chat.id, MESSAGES['ADD_SERVER_URL'],
                          reply_markup=markups.while_edit_user_markup())
         bot.register_next_step_handler(call.message, edit_server_url, value)
+
+    # Server Management - Autotune Mode Selection
+    elif key == "server_autotune":
+        bot.edit_message_text(
+            "🔧 <b>Autotune</b>\n\nВыберите режим запуска:",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=markups.server_autotune_confirm_markup(value))
+
+    # Server Management - Run Autotune
+    elif key == "server_autotune_run":
+        mode = value
+        bot.edit_message_text(
+            f"⏳ Autotune [{mode}] запущен, ожидайте результат...",
+            call.message.chat.id, call.message.message_id)
+        threading.Thread(
+            target=_run_autotune_async,
+            args=(call.message.chat.id, mode),
+            daemon=True).start()
+
     # Server Management - Confirm Delete Server Callback
     elif key == "confirm_delete_server":
         server_id = int(value)
@@ -1742,7 +1999,16 @@ def callback_query(call: CallbackQuery):
     elif key == "users_bot_management_menu":
         bot.edit_message_text(KEY_MARKUP['USERS_BOT_MANAGEMENT'], call.message.chat.id, call.message.message_id,
                                       reply_markup=markups.users_bot_management_markup())
-        
+
+    elif key == "admin_test_deeplink":
+        # 7.1 — Ask admin for a UUID to generate test deeplinks for all supported apps
+        bot.send_message(
+            call.message.chat.id,
+            "🔗 <b>Тест deeplink</b>\n\nВведите UUID подписки (например <code>abc12345-...</code>):",
+            parse_mode="HTML",
+        )
+        bot.register_next_step_handler(call.message, _admin_test_deeplink_step)
+
     elif key == "bot_users_list_management":
          bot.edit_message_text(KEY_MARKUP['BOT_USERS_MANAGEMENT'], call.message.chat.id, call.message.message_id,
                               reply_markup=markups.users_bot_users_management_markup())
@@ -2245,6 +2511,14 @@ def callback_query(call: CallbackQuery):
         settings = utils.all_configs_settings()
         users_bot_settings_update_message(call.message, markups.payment_methods_settings_markup(settings), title=MESSAGES['PAYMENT_METHODS_SETTINGS'])
 
+    elif key == "users_bot_settings_payment_crypto":
+        status = value == "0"
+        if not _set_bool_config("payment_method_crypto_enabled", status):
+            bot.send_message(call.message.chat.id, MESSAGES['ERROR_UNKNOWN'])
+            return
+        settings = utils.all_configs_settings()
+        users_bot_settings_update_message(call.message, markups.payment_methods_settings_markup(settings), title=MESSAGES['PAYMENT_METHODS_SETTINGS'])
+
     elif key == "pally_set_url":
         settings = utils.all_configs_settings()
         current_value = settings.get('pally_payment_url')
@@ -2267,6 +2541,39 @@ def callback_query(call: CallbackQuery):
     elif key == "yookassa_set_secret_key":
         bot.send_message(call.message.chat.id, MESSAGES['YOOKASSA_SECRET_KEY'], reply_markup=markups.while_edit_user_markup())
         bot.register_next_step_handler(call.message, yookassa_set_secret_key)
+
+    # CryptoPay Settings
+    elif key == "users_bot_settings_cryptopay":
+        bot.edit_message_text(
+            "🪙 <b>CryptoPay настройки</b>\n\nНастройте API Token от @CryptoBot для приёма криптоплатежей.",
+            call.message.chat.id, call.message.message_id,
+            reply_markup=markups.cryptopay_settings_markup(),
+        )
+
+    elif key == "cryptopay_set_token":
+        bot.send_message(
+            call.message.chat.id,
+            "🔑 Введите API Token от @CryptoBot\n(получить: @CryptoBot → Crypto Pay → Создать приложение)",
+            reply_markup=markups.while_edit_user_markup(),
+        )
+        bot.register_next_step_handler(call.message, cryptopay_set_token)
+
+    elif key == "cryptopay_test":
+        from Utils.cryptopay import CryptoPayClient, get_cryptopay_settings
+        crypto_settings = get_cryptopay_settings(USERS_DB)
+        if not crypto_settings:
+            bot.answer_callback_query(call.id, "❌ API Token не задан", show_alert=True)
+            return
+        try:
+            client = CryptoPayClient(crypto_settings['api_token'])
+            info = client.get_me()
+            if info:
+                app_name = info.get('name', '?')
+                bot.answer_callback_query(call.id, f"✅ Подключено: {app_name}", show_alert=True)
+            else:
+                bot.answer_callback_query(call.id, "❌ Не удалось подключиться. Проверьте токен.", show_alert=True)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"❌ Ошибка: {e}", show_alert=True)
 
 
 
@@ -2354,6 +2661,22 @@ def callback_query(call: CallbackQuery):
                          f"{MESSAGES['CURRENT_VALUE']}: {settings['channel_id']}\n{MESSAGES['USERS_BOT_SETTING_CHANNEL_ID']}",
                          reply_markup=markups.while_edit_user_markup())
         bot.register_next_step_handler(call.message, users_bot_settings_channel_id)
+
+    elif key == "users_bot_settings_status_channel":
+        current = ""
+        try:
+            configs = USERS_DB.select_str_config()
+            for c in (configs or []):
+                if c['key'] == 'status_channel_id':
+                    current = c['value']
+        except Exception:
+            pass
+        bot.send_message(
+            call.message.chat.id,
+            f"📢 <b>Канал статуса</b>\n\nТекущий: {html.escape(current or 'не задан')}\n\n"
+            "Введите ID Telegram-канала (например: @mychannel или -1001234567890):",
+            reply_markup=markups.while_edit_user_markup())
+        bot.register_next_step_handler(call.message, set_status_channel_id)
 
     elif key == "users_bot_settings_force_join":
         settings = utils.all_configs_settings()
@@ -2608,6 +2931,383 @@ def callback_query(call: CallbackQuery):
             bot.send_message(call.message.chat.id, MESSAGES['ERROR_USER_NOT_FOUND'], reply_markup=markups.main_menu_keyboard_markup())
             
             
+
+    # ----------------------------------- MTProto Proxy Settings -----------------------------------
+    elif key == "users_bot_settings_mtproto":
+        from config import MTPROTO_ENABLED, MTPROTO_SERVER, MTPROTO_PORT, MTPROTO_SECRET, MTPROTO_PROMOTE_TAG
+        info_lines = [
+            "📡 <b>MTProto Proxy — Настройки</b>",
+            "",
+            f"┣ Статус: {'✅ Включён' if MTPROTO_ENABLED else '❌ Выключен'}",
+            f"┣ Сервер: <code>{MTPROTO_SERVER or 'не задан'}</code>",
+            f"┣ Порт: <code>{MTPROTO_PORT}</code>",
+            f"┣ Секрет: <code>{(MTPROTO_SECRET[:12] + '...') if MTPROTO_SECRET else 'не задан'}</code>",
+            f"┗ Promote: <code>{MTPROTO_PROMOTE_TAG or 'не задан'}</code>",
+        ]
+        bot.send_message(
+            call.message.chat.id,
+            "\n".join(info_lines),
+            reply_markup=markups.mtproto_proxy_settings_markup(),
+            parse_mode="HTML",
+        )
+
+    elif key == "mtproto_toggle":
+        new_val = value == "1"
+        USERS_DB.add_str_config(key="mtproto_enabled", value="true" if new_val else "false")
+        USERS_DB.edit_str_config("mtproto_enabled", value="true" if new_val else "false")
+        import config as _cfg
+        _cfg.MTPROTO_ENABLED = new_val
+        bot.send_message(
+            call.message.chat.id,
+            f"📡 MTProto Proxy {'✅ включён' if new_val else '❌ выключен'}",
+            reply_markup=markups.mtproto_proxy_settings_markup(),
+        )
+
+    elif key == "mtproto_set_server":
+        bot.send_message(call.message.chat.id, "🌐 Введите IP-адрес сервера MTProto прокси:")
+        bot.register_next_step_handler(call.message, _admin_mtproto_set_server)
+
+    elif key == "mtproto_set_port":
+        bot.send_message(call.message.chat.id, "🔌 Введите порт MTProto прокси (по умолчанию 3128):")
+        bot.register_next_step_handler(call.message, _admin_mtproto_set_port)
+
+    elif key == "mtproto_set_secret":
+        bot.send_message(call.message.chat.id, "🔑 Введите секрет MTProto прокси (FakeTLS hex-строка):")
+        bot.register_next_step_handler(call.message, _admin_mtproto_set_secret)
+
+    elif key == "mtproto_set_promote":
+        bot.send_message(call.message.chat.id, "🏷 Введите promote tag (например @SmartKamaVPN), или отправьте «-» для сброса:")
+        bot.register_next_step_handler(call.message, _admin_mtproto_set_promote)
+
+    elif key == "mtproto_show_link":
+        from config import MTPROTO_SERVER, MTPROTO_PORT, MTPROTO_SECRET
+        if not MTPROTO_SERVER or not MTPROTO_SECRET:
+            bot.send_message(call.message.chat.id, "❌ Сервер или секрет не заданы",
+                             reply_markup=markups.mtproto_proxy_settings_markup())
+            return
+        tg_link = f"tg://proxy?server={MTPROTO_SERVER}&port={MTPROTO_PORT}&secret={MTPROTO_SECRET}"
+        https_link = f"https://t.me/proxy?server={MTPROTO_SERVER}&port={MTPROTO_PORT}&secret={MTPROTO_SECRET}"
+        bot.send_message(
+            call.message.chat.id,
+            f"📡 <b>MTProto Proxy Links</b>\n\n"
+            f"<b>tg://</b>\n<code>{tg_link}</code>\n\n"
+            f"<b>https://</b>\n<code>{https_link}</code>",
+            reply_markup=markups.mtproto_proxy_settings_markup(),
+            parse_mode="HTML",
+        )
+
+
+    # ----------------------------------- WhatsApp Proxy Settings -----------------------------------
+    elif key == "users_bot_settings_wa_proxy":
+        from config import WHATSAPP_PROXY_ENABLED, WHATSAPP_PROXY_SERVER
+        info_lines = [
+            "📱 <b>WhatsApp Proxy — Настройки</b>",
+            "",
+            f"┣ Статус: {'✅ Включён' if WHATSAPP_PROXY_ENABLED else '❌ Выключен'}",
+            f"┗ Сервер: <code>{WHATSAPP_PROXY_SERVER or 'не задан'}</code>",
+        ]
+        bot.send_message(
+            call.message.chat.id,
+            "\n".join(info_lines),
+            reply_markup=markups.whatsapp_proxy_settings_markup(),
+            parse_mode="HTML",
+        )
+
+    elif key == "wa_proxy_toggle":
+        new_val = value == "1"
+        USERS_DB.add_str_config(key="whatsapp_proxy_enabled", value="true" if new_val else "false")
+        USERS_DB.edit_str_config("whatsapp_proxy_enabled", value="true" if new_val else "false")
+        import config as _cfg
+        _cfg.WHATSAPP_PROXY_ENABLED = new_val
+        bot.send_message(
+            call.message.chat.id,
+            f"📱 WhatsApp Proxy {'✅ включён' if new_val else '❌ выключен'}",
+            reply_markup=markups.whatsapp_proxy_settings_markup(),
+        )
+
+    elif key == "wa_proxy_set_server":
+        bot.send_message(call.message.chat.id, "🌐 Введите IP-адрес сервера WhatsApp прокси:")
+        bot.register_next_step_handler(call.message, _admin_wa_proxy_set_server)
+
+    elif key == "wa_proxy_show_address":
+        from config import WHATSAPP_PROXY_SERVER
+        if not WHATSAPP_PROXY_SERVER:
+            bot.send_message(call.message.chat.id, "❌ Сервер не задан",
+                             reply_markup=markups.whatsapp_proxy_settings_markup())
+            return
+        bot.send_message(
+            call.message.chat.id,
+            f"📱 <b>WhatsApp Proxy Address</b>\n\n"
+            f"<code>{WHATSAPP_PROXY_SERVER}</code>\n\n"
+            f"Пользователи вводят этот адрес в:\n"
+            f"WhatsApp → Настройки → Хранилище и данные → Прокси",
+            reply_markup=markups.whatsapp_proxy_settings_markup(),
+            parse_mode="HTML",
+        )
+
+
+    # ----------------------------------- Signal Proxy Settings -----------------------------------
+    elif key == "users_bot_settings_signal_proxy":
+        from config import SIGNAL_PROXY_ENABLED, SIGNAL_PROXY_DOMAIN
+        info_lines = [
+            "🔐 <b>Signal Proxy — Настройки</b>",
+            "",
+            f"┣ Статус: {'✅ Включён' if SIGNAL_PROXY_ENABLED else '❌ Выключен'}",
+            f"┗ Домен: <code>{SIGNAL_PROXY_DOMAIN or 'не задан'}</code>",
+        ]
+        bot.send_message(
+            call.message.chat.id,
+            "\n".join(info_lines),
+            reply_markup=markups.signal_proxy_settings_markup(),
+            parse_mode="HTML",
+        )
+
+    elif key == "signal_proxy_toggle":
+        new_val = value == "1"
+        USERS_DB.add_str_config(key="signal_proxy_enabled", value="true" if new_val else "false")
+        USERS_DB.edit_str_config("signal_proxy_enabled", value="true" if new_val else "false")
+        import config as _cfg
+        _cfg.SIGNAL_PROXY_ENABLED = new_val
+        bot.send_message(
+            call.message.chat.id,
+            f"🔐 Signal Proxy {'✅ включён' if new_val else '❌ выключен'}",
+            reply_markup=markups.signal_proxy_settings_markup(),
+        )
+
+    elif key == "signal_proxy_set_domain":
+        bot.send_message(call.message.chat.id, "🌐 Введите доменное имя для Signal Proxy (например signal.example.com):")
+        bot.register_next_step_handler(call.message, _admin_signal_proxy_set_domain)
+
+    elif key == "signal_proxy_show_link":
+        from config import SIGNAL_PROXY_DOMAIN
+        if not SIGNAL_PROXY_DOMAIN:
+            bot.send_message(call.message.chat.id, "❌ Домен не задан",
+                             reply_markup=markups.signal_proxy_settings_markup())
+            return
+        link = f"https://signal.tube/#{SIGNAL_PROXY_DOMAIN}"
+        bot.send_message(
+            call.message.chat.id,
+            f"🔐 <b>Signal Proxy Link</b>\n\n"
+            f"<code>{link}</code>\n\n"
+            f"Пользователь нажимает ссылку → Signal предложит подключить прокси.",
+            reply_markup=markups.signal_proxy_settings_markup(),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+
+    # ----------------------------------- Statistics Dashboard -----------------------------------
+    elif key == "admin_stats_dashboard":
+        section = value or "overview"
+        now = datetime.datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        week_ago = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        month_ago = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+
+        if section == "overview":
+            users = USERS_DB.select_users() or []
+            orders = USERS_DB.select_orders() or []
+            payments = USERS_DB.select_payments() or []
+            wallets = USERS_DB.select_wallet() or []
+
+            total_users = len(users)
+            new_today = sum(1 for u in users if u.get('created_at', '').startswith(today_str))
+            new_week = sum(1 for u in users if u.get('created_at', '') >= week_ago)
+            new_month = sum(1 for u in users if u.get('created_at', '') >= month_ago)
+            banned = sum(1 for u in users if u.get('banned'))
+            tests = sum(1 for u in users if u.get('test_subscription'))
+
+            total_orders = len(orders)
+            approved_payments = [p for p in payments if p.get('approved') == 1]
+            revenue = sum(p.get('payment_amount', 0) for p in approved_payments)
+            pending = sum(1 for p in payments if p.get('approved') is None)
+            total_balance = sum(w.get('balance', 0) for w in wallets)
+
+            text = (
+                f"📊 <b>Обзор — {now.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
+                f"👥 <b>Пользователи</b>\n"
+                f"┣ Всего: <b>{total_users}</b>\n"
+                f"┣ Новых сегодня: <b>{new_today}</b>\n"
+                f"┣ За неделю: <b>{new_week}</b>\n"
+                f"┣ За месяц: <b>{new_month}</b>\n"
+                f"┣ Тест: <b>{tests}</b> · Бан: <b>{banned}</b>\n"
+                f"┗ Баланс кошельков: <b>{utils.rial_to_toman(total_balance)}</b> ₸\n\n"
+                f"💰 <b>Финансы</b>\n"
+                f"┣ Заказов: <b>{total_orders}</b>\n"
+                f"┣ Выручка: <b>{utils.rial_to_toman(revenue)}</b> ₸\n"
+                f"┣ Платежей: <b>{len(payments)}</b> (✅ {len(approved_payments)} · ⏳ {pending})\n"
+                f"┗ Ср. чек: <b>{utils.rial_to_toman(revenue // len(approved_payments)) if approved_payments else 0}</b> ₸"
+            )
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                      reply_markup=markups.admin_stats_dashboard_markup("overview"), parse_mode="HTML")
+            except Exception:
+                bot.send_message(call.message.chat.id, text,
+                                 reply_markup=markups.admin_stats_dashboard_markup("overview"), parse_mode="HTML")
+
+        elif section == "users":
+            users = USERS_DB.select_users() or []
+            total = len(users)
+            new_today = sum(1 for u in users if u.get('created_at', '').startswith(today_str))
+            new_week = sum(1 for u in users if u.get('created_at', '') >= week_ago)
+            new_month = sum(1 for u in users if u.get('created_at', '') >= month_ago)
+            tests = sum(1 for u in users if u.get('test_subscription'))
+            banned = sum(1 for u in users if u.get('banned'))
+            with_username = sum(1 for u in users if u.get('username'))
+
+            # Last 5 registered users
+            sorted_users = sorted(users, key=lambda u: u.get('created_at', ''), reverse=True)[:5]
+            recent_lines = []
+            for u in sorted_users:
+                name = u.get('full_name') or u.get('username') or str(u.get('telegram_id'))
+                date = u.get('created_at', '')[:10]
+                recent_lines.append(f"  · {name} — {date}")
+            recent_block = "\n".join(recent_lines) if recent_lines else "  нет"
+
+            text = (
+                f"👥 <b>Пользователи — {now.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
+                f"┣ Всего: <b>{total}</b>\n"
+                f"┣ С username: <b>{with_username}</b>\n"
+                f"┣ Тест-подписка: <b>{tests}</b>\n"
+                f"┣ Забанены: <b>{banned}</b>\n"
+                f"┗ Активных: <b>{total - banned}</b>\n\n"
+                f"📈 <b>Рост</b>\n"
+                f"┣ Сегодня: <b>+{new_today}</b>\n"
+                f"┣ Неделя: <b>+{new_week}</b>\n"
+                f"┗ Месяц: <b>+{new_month}</b>\n\n"
+                f"🆕 <b>Последние регистрации</b>\n{recent_block}"
+            )
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                      reply_markup=markups.admin_stats_dashboard_markup("users"), parse_mode="HTML")
+            except Exception:
+                bot.send_message(call.message.chat.id, text,
+                                 reply_markup=markups.admin_stats_dashboard_markup("users"), parse_mode="HTML")
+
+        elif section == "finance":
+            payments = USERS_DB.select_payments() or []
+            orders = USERS_DB.select_orders() or []
+            plans = USERS_DB.select_plans() or []
+
+            approved = [p for p in payments if p.get('approved') == 1]
+            rejected = [p for p in payments if p.get('approved') == 0]
+            pending = [p for p in payments if p.get('approved') is None]
+
+            revenue_total = sum(p.get('payment_amount', 0) for p in approved)
+            revenue_month = sum(p.get('payment_amount', 0) for p in approved if p.get('created_at', '') >= month_ago)
+            revenue_week = sum(p.get('payment_amount', 0) for p in approved if p.get('created_at', '') >= week_ago)
+            revenue_today = sum(p.get('payment_amount', 0) for p in approved if p.get('created_at', '').startswith(today_str))
+
+            card_payments = [p for p in approved if p.get('payment_method') == 'Card']
+            digital_payments = [p for p in approved if p.get('payment_method') != 'Card']
+
+            # Orders by plan
+            plan_map = {p['id']: p for p in plans}
+            plan_stats = {}
+            for o in orders:
+                pid = o.get('plan_id')
+                plan_stats[pid] = plan_stats.get(pid, 0) + 1
+            plan_lines = []
+            for pid, count in sorted(plan_stats.items(), key=lambda x: -x[1]):
+                p = plan_map.get(pid)
+                if p:
+                    plan_lines.append(f"  · {p.get('size_gb')}GB/{p.get('days')}д — <b>{count}</b> заказов")
+            plan_block = "\n".join(plan_lines[:5]) if plan_lines else "  нет"
+
+            text = (
+                f"💰 <b>Финансы — {now.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
+                f"📊 <b>Выручка</b>\n"
+                f"┣ Всего: <b>{utils.rial_to_toman(revenue_total)}</b> ₸\n"
+                f"┣ Месяц: <b>{utils.rial_to_toman(revenue_month)}</b> ₸\n"
+                f"┣ Неделя: <b>{utils.rial_to_toman(revenue_week)}</b> ₸\n"
+                f"┗ Сегодня: <b>{utils.rial_to_toman(revenue_today)}</b> ₸\n\n"
+                f"💳 <b>Платежи</b>\n"
+                f"┣ Всего: <b>{len(payments)}</b>\n"
+                f"┣ ✅ Подтверждено: <b>{len(approved)}</b>\n"
+                f"┣ ❌ Отклонено: <b>{len(rejected)}</b>\n"
+                f"┣ ⏳ Ожидание: <b>{len(pending)}</b>\n"
+                f"┣ 💳 Картой: <b>{len(card_payments)}</b>\n"
+                f"┗ 📲 Онлайн: <b>{len(digital_payments)}</b>\n\n"
+                f"📦 <b>Топ тарифов</b>\n{plan_block}"
+            )
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                      reply_markup=markups.admin_stats_dashboard_markup("finance"), parse_mode="HTML")
+            except Exception:
+                bot.send_message(call.message.chat.id, text,
+                                 reply_markup=markups.admin_stats_dashboard_markup("finance"), parse_mode="HTML")
+
+        elif section == "devices":
+            device_stats = USERS_DB.get_device_stats() or {}
+            all_devices = USERS_DB.get_all_devices() or []
+            total_devices = sum(device_stats.values())
+
+            phone = device_stats.get('phone', 0)
+            computer = device_stats.get('computer', 0)
+            tv = device_stats.get('tv', 0)
+
+            # App distribution
+            app_counts = {}
+            for d in all_devices:
+                app = d.get('client_app') or 'unknown'
+                app_counts[app] = app_counts.get(app, 0) + 1
+            app_lines = []
+            for app, cnt in sorted(app_counts.items(), key=lambda x: -x[1])[:6]:
+                app_lines.append(f"  · {app}: <b>{cnt}</b>")
+            app_block = "\n".join(app_lines) if app_lines else "  нет данных"
+
+            # Bar chart
+            def bar(count, total_d):
+                if total_d == 0:
+                    return "░░░░░░░░░░"
+                filled = round(count / total_d * 10)
+                return "▓" * filled + "░" * (10 - filled)
+
+            text = (
+                f"📱 <b>Устройства — {now.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
+                f"📊 Всего подключений: <b>{total_devices}</b>\n\n"
+                f"📱 Телефоны: <b>{phone}</b>\n"
+                f"  {bar(phone, total_devices)} {round(phone/total_devices*100) if total_devices else 0}%\n"
+                f"💻 Компьютеры: <b>{computer}</b>\n"
+                f"  {bar(computer, total_devices)} {round(computer/total_devices*100) if total_devices else 0}%\n"
+                f"📺 Android TV: <b>{tv}</b>\n"
+                f"  {bar(tv, total_devices)} {round(tv/total_devices*100) if total_devices else 0}%\n\n"
+                f"📲 <b>Приложения</b>\n{app_block}"
+            )
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                      reply_markup=markups.admin_stats_dashboard_markup("devices"), parse_mode="HTML")
+            except Exception:
+                bot.send_message(call.message.chat.id, text,
+                                 reply_markup=markups.admin_stats_dashboard_markup("devices"), parse_mode="HTML")
+
+        elif section == "subscriptions":
+            # 7.2 — Subscription format usage stats from in-memory counters in UserBot
+            try:
+                import importlib
+                userbot_mod = importlib.import_module('UserBot.bot')
+                fmt_counts = getattr(userbot_mod, '_app_format_counts', {})
+            except Exception:
+                fmt_counts = {}
+            total_fmt = sum(fmt_counts.values()) or 1
+            lines = []
+            icons = {'happ': '📱', 'singbox': '📦', 'hiddify': '🟢', 'clash': '🦊'}
+            for app_name in ('happ', 'singbox', 'hiddify', 'clash'):
+                cnt = fmt_counts.get(app_name, 0)
+                pct = round(cnt / total_fmt * 100)
+                icon = icons.get(app_name, '🔗')
+                lines.append(f"{icon} <b>{app_name}</b>: {cnt} ({pct}%)")
+            text = (
+                f"🔗 <b>Форматы подписок — {now.strftime('%d.%m.%Y %H:%M')}</b>\n\n"
+                f"Счётчики накапливаются с момента последнего рестарта бота.\n\n"
+                + "\n".join(lines)
+            )
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                      reply_markup=markups.admin_stats_dashboard_markup("subscriptions"), parse_mode="HTML")
+            except Exception:
+                bot.send_message(call.message.chat.id, text,
+                                 reply_markup=markups.admin_stats_dashboard_markup("subscriptions"), parse_mode="HTML")
 
 
     # ----------------------------------- Payment Callbacks -----------------------------------
@@ -3031,12 +3731,8 @@ def debug(message: Message):
 
 # ----------------------------------- Main -----------------------------------
 # Start Bot
-def start():
-    try:
-        bot.remove_webhook()
-    except Exception as e:
-        logging.warning(f"Failed to remove admin bot webhook: {e}")
-
+def _deferred_admin_init():
+    """Network-heavy init moved to background thread for fast cold start."""
     try:
         bot.set_my_commands([
             telebot.types.BotCommand("/start", BOT_COMMANDS['START']),
@@ -3045,23 +3741,48 @@ def start():
     except telebot.apihelper.ApiTelegramException as e:
         if e.result.status_code == 401:
             logging.error("Invalid Telegram Bot Token!")
-            exit(1)
+            os._exit(1)
         logging.warning(f"Failed to set admin bot commands: {e}")
     except Exception as e:
         logging.warning(f"Failed to set admin bot commands: {e}")
 
-    # Welcome to Admin
+    if os.getenv('SMARTKAMA_NOTIFY_STARTUP', '').strip().lower() not in {'1', 'true', 'yes', 'on'}:
+        logging.info("Admin bot startup notification skipped")
+        return
+
     for admin in ADMINS_ID:
         try:
             bot.send_message(admin, MESSAGES['WELCOME_TO_ADMIN'])
         except Exception as e:
             logging.warning(f"Error in send message to admin {admin}: {e}")
 
+
+def start():
+    try:
+        bot.remove_webhook(drop_pending_updates=True)
+    except TypeError:
+        try:
+            bot.remove_webhook()
+        except Exception as e:
+            logging.warning(f"Failed to remove admin bot webhook: {e}")
+    except Exception as e:
+        logging.warning(f"Failed to remove admin bot webhook: {e}")
+
     bot.enable_save_next_step_handlers()
     bot.load_next_step_handlers()
+
+    # Run set_my_commands + welcome in background so polling starts instantly
+    from threading import Thread
+    Thread(target=_deferred_admin_init, daemon=True).start()
+
     while True:
         try:
-            bot.infinity_polling()
+            bot.infinity_polling(
+                timeout=10,
+                long_polling_timeout=5,
+                skip_pending=True,
+                allowed_updates=["message", "callback_query"],
+            )
         except Exception as e:
             logging.exception(f"Admin bot polling stopped: {e}")
-            time.sleep(5)
+            time.sleep(2)

@@ -19,13 +19,14 @@ def user_info_template(usr, server, header=""):
 
     return f"""
 {header}
-{MESSAGES['INFO_USER_NAME']} <a href='{usr['link']}'> {usr['name']} </a>
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['SERVER']} {server['title']}
-{MESSAGES['INFO_USAGE']} {usr['usage']['current_usage_GB']} {MESSAGES['OF']} {usr['usage']['usage_limit_GB']} {MESSAGES['GB']}
-{MESSAGES['INFO_REMAINING_DAYS']} {usr['remaining_day']}
-{MESSAGES['INFO_LAST_CONNECTION']} {usr['last_connection']}
-{MESSAGES['INFO_COMMENT']} {usr['comment']}
+🛰 {MESSAGES['INFO_USER_NAME']} <a href='{usr['link']}'> {usr['name']} </a>
+┌──────────────────────┐
+│ 🖥 {MESSAGES['SERVER']} {server['title']}
+│ 📊 {MESSAGES['INFO_USAGE']} {usr['usage']['current_usage_GB']} {MESSAGES['OF']} {usr['usage']['usage_limit_GB']} {MESSAGES['GB']}
+│ 📆 {MESSAGES['INFO_REMAINING_DAYS']} {usr['remaining_day']}
+│ 🌐 {MESSAGES['INFO_LAST_CONNECTION']} {usr['last_connection']}
+│ 💬 {MESSAGES['INFO_COMMENT']} {usr['comment']}
+└──────────────────────┘
 """
 
 # Server Info Message Template
@@ -44,10 +45,11 @@ def server_info_template(server, plans, header=""):
 
     return f"""
 {header}
-{MESSAGES['INFO_SERVER']} <a href='{server['url']}/admin'> {server['title']} </a>
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['INFO_SERVER_USER_NUMBER']} {user_index} {MESSAGES['OF']} {server['user_limit']}
-{MESSAGES['INFO_SERVER_USER_PLAN']} {plans_num}
+🖥 {MESSAGES['INFO_SERVER']} <a href='{server['url']}/admin'> {server['title']} </a>
+┌──────────────────────┐
+│ 👥 {MESSAGES['INFO_SERVER_USER_NUMBER']} {user_index} {MESSAGES['OF']} {server['user_limit']}
+│ 📋 {MESSAGES['INFO_SERVER_USER_PLAN']} {plans_num}
+└──────────────────────┘
 """
 
 # Plan Info Message Template
@@ -59,14 +61,15 @@ def plan_info_template(plan, orders, header=""):
     sale = num_orders * plan['price']
     return f"""
 {header}
-{MESSAGES['INFO_PLAN_ID']} {plan['id']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['INFO_PLAN_USAGE']} {plan['size_gb']} 
-{MESSAGES['INFO_PLAN_DAYS']} {plan['days']} 
-{MESSAGES['INFO_PLAN_PRICE']} {utils.rial_to_toman(plan['price'])} {MESSAGES['TOMAN']}
-{MESSAGES['INFO_PLAN_DESC']} {plan['description']}
-{MESSAGES['INFO_PLAN_NUM_ORDER']} {num_orders} 
-{MESSAGES['INFO_PLAN_TOTAL_SALE']} {utils.rial_to_toman(sale)} {MESSAGES['TOMAN']}
+🏷 {MESSAGES['INFO_PLAN_ID']} {plan['id']}
+┌──────────────────────┐
+│ 📊 {MESSAGES['INFO_PLAN_USAGE']} {plan['size_gb']} 
+│ 📆 {MESSAGES['INFO_PLAN_DAYS']} {plan['days']} 
+│ 💰 {MESSAGES['INFO_PLAN_PRICE']} {utils.rial_to_toman(plan['price'])} {MESSAGES['TOMAN']}
+│ 📝 {MESSAGES['INFO_PLAN_DESC']} {plan['description']}
+│ 📦 {MESSAGES['INFO_PLAN_NUM_ORDER']} {num_orders} 
+│ 💎 {MESSAGES['INFO_PLAN_TOTAL_SALE']} {utils.rial_to_toman(sale)} {MESSAGES['TOMAN']}
+└──────────────────────┘
 """
 
 # Users List Message Template
@@ -79,10 +82,12 @@ def users_list_template(users, heder=""):
 
     return f"""
 {heder}
-{MESSAGES['HEADER_USERS_LIST']}
+🛰 {MESSAGES['HEADER_USERS_LIST']}
 {MESSAGES['HEADER_USERS_LIST_MSG']}
-{MESSAGES['NUM_USERS']} {len(users)}
-{MESSAGES['NUM_USERS_ONLINE']} {online_users} 
+┌──────────────────────┐
+│ 👥 {MESSAGES['NUM_USERS']} {len(users)}
+│ 🟢 {MESSAGES['NUM_USERS_ONLINE']} {online_users} 
+└──────────────────────┘
 """
 
 
@@ -111,12 +116,14 @@ def bot_users_list_template(users, wallets, orders, header=""):
 
     return f"""
 {header}
-<b>{MESSAGES['HEADER_USERS_LIST']}</b>
+🛰 <b>{MESSAGES['HEADER_USERS_LIST']}</b>
 {MESSAGES['HEADER_USERS_LIST_MSG']}
-{MESSAGES['NUM_USERS']} {len(users)}
-{MESSAGES['NUM_GET_FREE_USERS']} {users_get_free}
-{MESSAGES['NUM_ORDERED_USERS']} {ordered_users}
-{MESSAGES['TOTAL_BALANCE_USERS']} {utils.rial_to_toman(total_balance_wallets)}{MESSAGES['TOMAN']}
+┌──────────────────────┐
+│ 👥 {MESSAGES['NUM_USERS']} {len(users)}
+│ 🎯 {MESSAGES['NUM_GET_FREE_USERS']} {users_get_free}
+│ 📦 {MESSAGES['NUM_ORDERED_USERS']} {ordered_users}
+│ 💎 {MESSAGES['TOTAL_BALANCE_USERS']} {utils.rial_to_toman(total_balance_wallets)}{MESSAGES['TOMAN']}
+└──────────────────────┘
 """
 
 # Bot Users Info Message Template
@@ -155,20 +162,21 @@ def bot_users_info_template(user, orders, payments, wallet, non_order_subs, orde
 
     return f"""
 {header}
-{MESSAGES['INFO_USER_NAME']}{name}
-{MESSAGES['INFO_USER_USERNAME']}{username}
-{MESSAGES['INFO_USER_NUM_ID']}{user['telegram_id']}
-{MESSAGES['GET_FREE_TEST_STATUS']}{free_test_status}
-{MESSAGES['WALLET_BALANCE']}{utils.rial_to_toman(total_balance)}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['NUM_ORDER_SUB']} {total_order_subs}
-{MESSAGES['NUM_NON_ORDER_SUB']} {total_non_order_subs}
-{MESSAGES['NUM_PAYMENTS']} {total_payment}
-{MESSAGES['NUM_APPROVED_PAYMENTS']} {approved_payment}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['NUM_ORDERS']} {total_orders}
-{MESSAGES['TOTAL_ORDERS_VALUME']} {total_valume}
-{MESSAGES['TOTAL_ORDERS_SALES']} {utils.rial_to_toman(total_sales)}{MESSAGES['TOMAN']}
+👤 {MESSAGES['INFO_USER_NAME']}{name}
+🔗 {MESSAGES['INFO_USER_USERNAME']}{username}
+🆔 {MESSAGES['INFO_USER_NUM_ID']}{user['telegram_id']}
+🎯 {MESSAGES['GET_FREE_TEST_STATUS']}{free_test_status}
+💎 {MESSAGES['WALLET_BALANCE']}{utils.rial_to_toman(total_balance)}{MESSAGES['TOMAN']}
+┌──────────────────────┐
+│ 📋 {MESSAGES['NUM_ORDER_SUB']} {total_order_subs}
+│ 📋 {MESSAGES['NUM_NON_ORDER_SUB']} {total_non_order_subs}
+│ 💳 {MESSAGES['NUM_PAYMENTS']} {total_payment}
+│ ✅ {MESSAGES['NUM_APPROVED_PAYMENTS']} {approved_payment}
+├──────────────────────┤
+│ 📦 {MESSAGES['NUM_ORDERS']} {total_orders}
+│ 📊 {MESSAGES['TOTAL_ORDERS_VALUME']} {total_valume}
+│ 💰 {MESSAGES['TOTAL_ORDERS_SALES']} {utils.rial_to_toman(total_sales)}{MESSAGES['TOMAN']}
+└──────────────────────┘
 """
 
 # Bot Users Order Info Message Template
@@ -178,18 +186,19 @@ def bot_orders_info_template(order, plan, user, server, header=""):
 
     return f"""
 {header}
-{MESSAGES['BOT_ORDER_ID']}<code>{order['id']}</code>
-{MESSAGES['BOT_ORDER_DATE']}{order['created_at']}
-{MESSAGES['INFO_USER_NAME']}<b>{name}</b>
-{MESSAGES['INFO_USER_USERNAME']}{username}
-{MESSAGES['INFO_USER_NUM_ID']}{user['telegram_id']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['ORDERED_VALUME']}{plan['size_gb']}
-{MESSAGES['ORDERED_DAYS']}{plan['days']}
-{MESSAGES['ORDERED_PRICE']}{utils.rial_to_toman(plan['price'])}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['SUB_NAME']}{order['user_name']}
-{MESSAGES['SERVER']}{server['title']}
+📦 {MESSAGES['BOT_ORDER_ID']}<code>{order['id']}</code>
+📅 {MESSAGES['BOT_ORDER_DATE']}{order['created_at']}
+👤 {MESSAGES['INFO_USER_NAME']}<b>{name}</b>
+🔗 {MESSAGES['INFO_USER_USERNAME']}{username}
+🆔 {MESSAGES['INFO_USER_NUM_ID']}{user['telegram_id']}
+┌──────────────────────┐
+│ 📊 {MESSAGES['ORDERED_VALUME']}{plan['size_gb']}
+│ 📆 {MESSAGES['ORDERED_DAYS']}{plan['days']}
+│ 💰 {MESSAGES['ORDERED_PRICE']}{utils.rial_to_toman(plan['price'])}{MESSAGES['TOMAN']}
+├──────────────────────┤
+│ 🏷 {MESSAGES['SUB_NAME']}{order['user_name']}
+│ 🖥 {MESSAGES['SERVER']}{server['title']}
+└──────────────────────┘
 """
 
 # Payment Received Template - Send to Admin
@@ -203,15 +212,16 @@ def bot_payment_info_template(payment,user, header="", footer=""):
     return f"""
 {header}
 
-{MESSAGES['PAYMENTS_ID']} <code>{payment['id']}</code>
-{MESSAGES['INFO_USER_NAME']} <b>{name}</b>
-{MESSAGES['INFO_USER_USERNAME']} {username}
-{MESSAGES['INFO_USER_NUM_ID']} {user['telegram_id']}
-{MESSAGES['BOT_PAYMENT_DATE']} {payment['created_at']}
-{MESSAGES['PAIED_AMOUNT']} <b>{utils.rial_to_toman(payment['payment_amount'])}</b> {MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['STATUS']} {approved}
-{MESSAGES['PAYMENTS_METHOD']} {payment['payment_method']}
+💳 {MESSAGES['PAYMENTS_ID']} <code>{payment['id']}</code>
+👤 {MESSAGES['INFO_USER_NAME']} <b>{name}</b>
+🔗 {MESSAGES['INFO_USER_USERNAME']} {username}
+🆔 {MESSAGES['INFO_USER_NUM_ID']} {user['telegram_id']}
+📅 {MESSAGES['BOT_PAYMENT_DATE']} {payment['created_at']}
+💰 {MESSAGES['PAIED_AMOUNT']} <b>{utils.rial_to_toman(payment['payment_amount'])}</b> {MESSAGES['TOMAN']}
+┌──────────────────────┐
+│ {MESSAGES['STATUS']} {approved}
+│ 💳 {MESSAGES['PAYMENTS_METHOD']} {payment['payment_method']}
+└──────────────────────┘
 
 {footer}
 """
@@ -263,18 +273,20 @@ def bot_orders_list_template(orders, plans, header=""):
 
     return f"""
 {header}
-<b>{MESSAGES['HEADER_ORDERS_LIST']}</b>
-{MESSAGES['NUM_ORDERS']} {total_orders}
-{MESSAGES['TOTAL_ORDERS_VALUME']} {total_valume}
-{MESSAGES['TOTAL_ORDERS_SALES']} {utils.rial_to_toman(total_sales)}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['LAST_30DAYS_NUM_ORDERS']} {last30days_num_orders}
-{MESSAGES['LAST_30DAYS_ORDERS_VALUME']} {last30days_valume }
-{MESSAGES['LAST_30DAYS_ORDERS_SALES']} {utils.rial_to_toman(last30days_sales)}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['THIS_MONTH_NUM_ORDERS']} {this_month_num_orders}
-{MESSAGES['THIS_MONTH_ORDERS_VALUME']} {this_month_valume}
-{MESSAGES['THIS_MONTH_ORDERS_SALES']} {utils.rial_to_toman(this_month_sales)}{MESSAGES['TOMAN']}
+📦 <b>{MESSAGES['HEADER_ORDERS_LIST']}</b>
+┌──────────────────────┐
+│ 📦 {MESSAGES['NUM_ORDERS']} {total_orders}
+│ 📊 {MESSAGES['TOTAL_ORDERS_VALUME']} {total_valume}
+│ 💰 {MESSAGES['TOTAL_ORDERS_SALES']} {utils.rial_to_toman(total_sales)}{MESSAGES['TOMAN']}
+├──── 30 дней ─────────┤
+│ 📦 {MESSAGES['LAST_30DAYS_NUM_ORDERS']} {last30days_num_orders}
+│ 📊 {MESSAGES['LAST_30DAYS_ORDERS_VALUME']} {last30days_valume }
+│ 💰 {MESSAGES['LAST_30DAYS_ORDERS_SALES']} {utils.rial_to_toman(last30days_sales)}{MESSAGES['TOMAN']}
+├──── этот месяц ──────┤
+│ 📦 {MESSAGES['THIS_MONTH_NUM_ORDERS']} {this_month_num_orders}
+│ 📊 {MESSAGES['THIS_MONTH_ORDERS_VALUME']} {this_month_valume}
+│ 💰 {MESSAGES['THIS_MONTH_ORDERS_SALES']} {utils.rial_to_toman(this_month_sales)}{MESSAGES['TOMAN']}
+└──────────────────────┘
 """
 
 # Bot Users List Message Template
@@ -308,15 +320,17 @@ def bot_payments_list_template(payments, header=""):
 
     return f"""
 {header}
-<b>{MESSAGES['HEADER_PAYMENT_LIST']}</b>
-{MESSAGES['NUM_PAYMENTS']}{total_payments}
-{MESSAGES['TOTAL_PAYMENTS_AMOUNT']}{utils.rial_to_toman(total_amount)}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['LAST_30DAYS_NUM_PAYMENTS']}{last30days_num_payments}
-{MESSAGES['LAST_30DAYS_PAYMENTS_AMOUNT']}{utils.rial_to_toman(last30days_amount)}{MESSAGES['TOMAN']}
-❖⬩╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍╍⬩❖
-{MESSAGES['THIS_MONTH_NUM_PAYMENTS']}{this_month_num_payments}
-{MESSAGES['THIS_MONTH_PAYMENTS_AMOUNT']}{utils.rial_to_toman(this_month_amount)}{MESSAGES['TOMAN']}
+💳 <b>{MESSAGES['HEADER_PAYMENT_LIST']}</b>
+┌──────────────────────┐
+│ 💳 {MESSAGES['NUM_PAYMENTS']}{total_payments}
+│ 💰 {MESSAGES['TOTAL_PAYMENTS_AMOUNT']}{utils.rial_to_toman(total_amount)}{MESSAGES['TOMAN']}
+├──── 30 дней ─────────┤
+│ 💳 {MESSAGES['LAST_30DAYS_NUM_PAYMENTS']}{last30days_num_payments}
+│ 💰 {MESSAGES['LAST_30DAYS_PAYMENTS_AMOUNT']}{utils.rial_to_toman(last30days_amount)}{MESSAGES['TOMAN']}
+├──── этот месяц ──────┤
+│ 💳 {MESSAGES['THIS_MONTH_NUM_PAYMENTS']}{this_month_num_payments}
+│ 💰 {MESSAGES['THIS_MONTH_PAYMENTS_AMOUNT']}{utils.rial_to_toman(this_month_amount)}{MESSAGES['TOMAN']}
+└──────────────────────┘
 """
 
 # Configs List Message Template
@@ -337,11 +351,12 @@ def configs_template(configs):
 # System Status Message Template
 def system_status_template(status):
     return f"""
-<b> System Status </b>
---------------------------------
-<b> CPU: </b> {status['cpu']}%
-<b> RAM: </b> {status['ram']}%
-<b> DISK: </b> {status['disk']}%
+🖥 <b>Статус системы</b>
+┌──────────────────────┐
+│ 🔲 CPU:  {status['cpu']}%
+│ 🧠 RAM:  {status['ram']}%
+│ 💾 DISK: {status['disk']}%
+└──────────────────────┘
 """
 
 
@@ -368,45 +383,106 @@ def owner_info_template(username, card_number_card, card_name):
     username = username if username else "-"
     card_number_card = card_number_card if card_number_card else "-"
     card_name = card_name if card_name else "-"
-    if LANG == 'FA':
-        return f"""
-<b> اطلاعات مالک </b>
+    return f"""
+<b> Информация о владельце </b>
 --------------------------------
-<b> نام کاربری پشتیبان: </b> {username}
-<b> شماره کارت بانکی: </b> {card_number_card}
-<b> نام صاحب حساب بانکی: </b> {card_name}
-"""
-    elif LANG == 'EN':
-        return f"""
-<b> Owner Info </b>
---------------------------------
-<b> Telegram Support Username: </b> {username} 
-<b> Bank Card Number: </b> {card_number_card}
-<b> Bank Card Name: </b> {card_name}
+<b> Telegram поддержки: </b> {username}
+<b> Номер банковской карты: </b> {card_number_card}
+<b> Имя владельца карты: </b> {card_name}
 """
 
 
 # About Bot Message Template
 def about_template():
-    if LANG == 'FA':
-        return f"""
-🤖هیدی بات، راحت تر از همیشه!
+    return f"""
+🤖 <b>SmartKamaVPN</b> — Панель управления
 
-<a href='https://github.com/B3H1Z/Hiddify-Telegram-Bot'> لینک پروژه </a>
-
-<a href='https://t.me/HidyBotGroup'> گروه پشتیبانی </a> | <a href='https://t.me/HidyBotChannel'> کانال اطلاع رسانی </a>
-
-این پروژه به صورت رایگان توسعه داده شده و جهت ادامه توسعه رایگان، حمایت های شما میتواند انگیزه بخش باشد❤️
-
-نسخه: {VERSION}
+Версия: {VERSION}
 """
-    elif LANG == 'EN':
+
+
+# Device Connections Template — shows devices connected to a subscription
+def device_connections_template(devices, sub_name=""):
+    if not devices:
+        header = f"📱 <b>Устройства</b>"
+        if sub_name:
+            header += f" — {sub_name}"
         return f"""
-🤖Hiddify Bot, Easier than ever!
-
-<a href='https://github.com/B3H1Z/Hiddify-Telegram-Bot'> Project </a>|<a href='https://t.me/HidyBotGroup'> Support Group </a>
-
-This project is developed for free and your financial support can be motivating for further development❤️
-
-Version: {VERSION}
+{header}
+┌──────────────────────┐
+│  Нет подключённых устройств
+└──────────────────────┘
 """
+
+    def _normalize_device_type(value):
+        normalized = str(value or "").strip().lower()
+        if normalized in {"tv", "android tv", "android_tv", "smart tv", "apple tv"}:
+            return "tv"
+        if normalized in {"phone", "android", "ios", "iphone"}:
+            return "phone"
+        return "computer"
+
+    _type_icons = {
+        "phone": "📱",
+        "computer": "💻",
+        "tv": "📺",
+    }
+
+    header = f"📱 <b>Устройства</b>"
+    if sub_name:
+        header += f" — {sub_name}"
+    header += f"\n┌──────────────────────┐"
+
+    lines = []
+    for d in devices:
+        icon = _type_icons.get(_normalize_device_type(d.get("device_type")), "💻")
+        name = d.get("device_name") or "Неизвестно"
+        app = d.get("client_app") or "?"
+        last = d.get("last_seen", "?")
+        lines.append(f"│ {icon} {name} • {app}")
+        lines.append(f"│    🕐 {last}")
+        lines.append(f"├──────────────────────┤")
+
+    # Replace last separator with bottom border
+    if lines:
+        lines[-1] = "└──────────────────────┘"
+
+    return header + "\n" + "\n".join(lines)
+
+
+# Device Stats Template — global overview
+def device_stats_template(stats, total_devices=0):
+    def _normalize_device_type(value):
+        normalized = str(value or "").strip().lower()
+        if normalized in {"tv", "android tv", "android_tv", "smart tv", "apple tv"}:
+            return "tv"
+        if normalized in {"phone", "android", "ios", "iphone"}:
+            return "phone"
+        return "computer"
+
+    _type_icons = {
+        "phone": "📱",
+        "computer": "💻",
+        "tv": "📺",
+    }
+    header = f"""
+🛰 <b>Статистика устройств</b>
+┌──────────────────────┐
+│ 📊 Всего устройств: {total_devices}"""
+
+    normalized_stats = {}
+    for dtype, count in (stats or {}).items():
+        key = _normalize_device_type(dtype)
+        normalized_stats[key] = normalized_stats.get(key, 0) + int(count)
+
+    lines = []
+    labels = {"phone": "Телефоны", "computer": "Компьютеры", "tv": "Android TV"}
+    for dtype in ("phone", "computer", "tv"):
+        count = normalized_stats.get(dtype)
+        if not count:
+            continue
+        icon = _type_icons.get(dtype, "💻")
+        label = labels[dtype]
+        lines.append(f"│ {icon} {label}: {count}")
+
+    return header + "\n" + "\n".join(lines) + "\n└──────────────────────┘"

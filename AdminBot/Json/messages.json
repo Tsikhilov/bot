@@ -5,6 +5,8 @@
     "ERROR_USER_NOT_FOUND": "❌Пользователь не найден",
     "ERROR_INVALID_COMMAND": "❌Неверная команда",
     "ERROR_UNKNOWN": "❌Неизвестная ошибка",
+    "UNKNOWN_ERROR": "❌Неизвестная ошибка",
+    "ERROR_NO_USERS": "❌Пользователи не найдены",
     "ERROR_CONFIG_NOT_FOUND": "❌Конфигурация не найдена",
     "ERROR_PLAN_NOT_FOUND": "❌Тариф не найден",
     "ERROR_SUB_NOT_FOUND": "❌Подписка с таким ID не найдена",

@@ -26,7 +26,7 @@ def add_title_menu_button(markup: InlineKeyboardMarkup):
     markup.add(InlineKeyboardButton(KEY_MARKUP['TITLE_MENU'], callback_data="admin_title_menu:None"))
     return markup
 
-#----------------------------------Hiddify User ---------------------------------
+#----------------------------------Panel User ---------------------------------
 # Users List Inline Keyboard Markup
 def users_list_markup(server_id, users, page=1):
     markup = InlineKeyboardMarkup(row_width=3)
@@ -65,6 +65,7 @@ def user_info_markup(uuid):
     markup.row_width = 1
     markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_USER'], callback_data=f"user_config:{uuid}"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['EDIT_USER'], callback_data=f"user_edit:{uuid}"))
+    markup.add(InlineKeyboardButton("📱 Устройства", callback_data=f"user_devices:{uuid}"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['DELETE_USER'], callback_data=f"user_delete:{uuid}"))
     return add_title_menu_button(markup)
 
@@ -157,30 +158,27 @@ def search_user_markup(server_id=None):
         markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_server_user_list:{server_id}"))
     return add_title_menu_button(markup)
 
-#----------------------------------End Hiddify User ---------------------------------
+#----------------------------------End Panel User ---------------------------------
 #----------------------------------Bot User Management ------------------------------
 
 # Users Bot Management - Inline Keyboard Markup
 def users_bot_management_markup(value=None):
     markup = InlineKeyboardMarkup()
-    markup.row_width = 3
-    # markup.add(
-    #     InlineKeyboardButton(KEY_MARKUP['USERS_BOT_ORDERS_STATUS'], callback_data=f"users_bot_orders_status:None"),
-    # markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_ADD_PLAN'], callback_data=f"users_bot_add_plan:None"),
-    #            InlineKeyboardButton(KEY_MARKUP['USERS_BOT_DEL_PLAN'], callback_data=f"users_bot_list_plans:None"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['BOT_USERS_MANAGEMENT'],
-                                    callback_data=f"bot_users_list_management:None"))
-    # markup.add(InlineKeyboardButton(KEY_MARKUP['ORDERS_MANAGEMENT'],
-    #                                 callback_data=f"users_bot_orders_list_management:None"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['PAYMENT_MANAGEMENT'],
-                                    callback_data=f"users_bot_payments_list_management:None"),
-                                    InlineKeyboardButton(KEY_MARKUP['ORDERS_MANAGEMENT'],
-                                    callback_data=f"users_bot_orders_list_management:None"),)
-    markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SUB_STATUS'], callback_data=f"users_bot_sub_status:None"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SEND_MESSAGE_TO_USERS'],
-                                    callback_data=f"users_bot_send_msg_users:None"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_OWNER_INFO'], callback_data=f"users_bot_owner_info:None"))
-    markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS'], callback_data=f"users_bot_settings:None"))
+    markup.row_width = 2
+    # Футуристичный разделитель
+    markup.add(InlineKeyboardButton('🪐━━━━━━━━━━━━━━━━━━━━━━━🪐', callback_data='noop'))
+    markup.add(InlineKeyboardButton(f"👥 {KEY_MARKUP['BOT_USERS_MANAGEMENT']}", callback_data=f"bot_users_list_management:None"))
+    markup.add(
+        InlineKeyboardButton(f"💳 {KEY_MARKUP['PAYMENT_MANAGEMENT']}", callback_data=f"users_bot_payments_list_management:None"),
+        InlineKeyboardButton(f"📦 {KEY_MARKUP['ORDERS_MANAGEMENT']}", callback_data=f"users_bot_orders_list_management:None"))
+    markup.add(InlineKeyboardButton(f"📊 {KEY_MARKUP['USERS_BOT_SUB_STATUS']}", callback_data=f"users_bot_sub_status:None"))
+    markup.add(InlineKeyboardButton(f"✉️ {KEY_MARKUP['USERS_BOT_SEND_MESSAGE_TO_USERS']}", callback_data=f"users_bot_send_msg_users:None"))
+    markup.add(InlineKeyboardButton(f"👤 {KEY_MARKUP['USERS_BOT_OWNER_INFO']}", callback_data=f"users_bot_owner_info:None"))
+    markup.add(InlineKeyboardButton(f"⚙️ {KEY_MARKUP['USERS_BOT_SETTINGS']}", callback_data=f"users_bot_settings:None"))
+    markup.add(InlineKeyboardButton("📊 Статистика", callback_data="admin_stats_dashboard:overview"))
+    markup.add(InlineKeyboardButton("🔗 Тест deeplink", callback_data="admin_test_deeplink:None"))
+    # Финальный футуристичный разделитель
+    markup.add(InlineKeyboardButton('✨━━━━━━━━━━━━━━━━━━━━━━━✨', callback_data='noop'))
     return add_title_menu_button(markup)
 
 # Users Bot Users List Management - Inline Keyboard Markup
@@ -334,7 +332,7 @@ def users_bot_management_settings_markup(settings):
                InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_RENEWAL_SUBSCRIPTION_STATUS']} | {status_renewal_sub}",
                                     callback_data= f"users_bot_settings_renewal_sub_status:{settings['renewal_subscription_status']}"))
     
-    markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_CHANNEL_ّFORCE_JOIN']} | {status_force_join}",
+    markup.add(InlineKeyboardButton(f"{KEY_MARKUP['USERS_BOT_SETTINGS_CHANNEL_FORCE_JOIN']} | {status_force_join}",
                                     callback_data=f"users_bot_settings_force_join:{settings['force_join_channel']}"),
                InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_CHANNEL_ID'],
                                     callback_data=f"users_bot_settings_channel_id:None"))
@@ -364,10 +362,18 @@ def users_bot_management_settings_markup(settings):
                                     callback_data=f"users_bot_settings_renewal_method_menu:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RESET_FREE_TEST_LIMIT'],
                                     callback_data=f"users_bot_settings_reset_free_test_limit_question:None"))
+    markup.add(InlineKeyboardButton("📡 MTProto Proxy",
+                                    callback_data="users_bot_settings_mtproto:None"))
+    markup.add(InlineKeyboardButton("📱 WhatsApp Proxy",
+                                    callback_data="users_bot_settings_wa_proxy:None"))
+    markup.add(InlineKeyboardButton("🔐 Signal Proxy",
+                                    callback_data="users_bot_settings_signal_proxy:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_BACKUP_BOT'],
                                     callback_data=f"users_bot_settings_backup_bot:None"),
                InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_RESTORE_BOT'],
                                     callback_data=f"users_bot_settings_restore_bot:None"))
+    markup.add(InlineKeyboardButton("📢 Канал статуса",
+                                    callback_data="users_bot_settings_status_channel:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"users_bot_management_menu:None"))
     return add_title_menu_button(markup)
 
@@ -553,8 +559,24 @@ def server_selected_markup(server_id):
                                     callback_data=f"server_list_of_plans:{server_id}"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['EDIT_SERVER'],
                                     callback_data=f"edit_server:{server_id}"))
+    markup.add(InlineKeyboardButton("🔧 Autotune",
+                                    callback_data=f"server_autotune:{server_id}"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"back_to_server_management:None"))
-    
+
+    return add_title_menu_button(markup)
+
+# Server Management - Autotune Mode Selection - Inline Keyboard Markup
+def server_autotune_confirm_markup(server_id):
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("▶️ Полный запуск (--full)",
+                                    callback_data=f"server_autotune_run:full"))
+    markup.add(InlineKeyboardButton("🛡 Только Guard",
+                                    callback_data=f"server_autotune_run:guard"))
+    markup.add(InlineKeyboardButton("🌐 Только Network",
+                                    callback_data=f"server_autotune_run:network"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'],
+                                    callback_data=f"server_selected:{server_id}"))
     return add_title_menu_button(markup)
 
 # Server Management - Server Delete - Inline Keyboard Markup
@@ -626,6 +648,7 @@ def server_status_markup(servers):
             keys.append(InlineKeyboardButton(f"{server['title']}",
                                              callback_data=f"server_status:{server['id']}"))
     markup.add(*keys)
+    markup.add(InlineKeyboardButton("📱 Статистика устройств", callback_data=f"device_stats:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data=f"del_msg:None"))
     return add_title_menu_button(markup)
 
@@ -639,6 +662,16 @@ def yookassa_settings_markup():
     return add_title_menu_button(markup)
 
 
+def cryptopay_settings_markup():
+    """Markup for CryptoPay settings"""
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    markup.add(InlineKeyboardButton("🔑 API Token", callback_data="cryptopay_set_token:None"))
+    markup.add(InlineKeyboardButton("🧪 Проверить подключение", callback_data="cryptopay_test:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_settings_payment_methods:None"))
+    return add_title_menu_button(markup)
+
+
 def payment_methods_settings_markup(settings):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
@@ -646,6 +679,7 @@ def payment_methods_settings_markup(settings):
     card_status = "✅" if settings.get('payment_method_card_enabled') else "❌"
     yookassa_status = "✅" if settings.get('payment_method_yookassa_enabled') else "❌"
     pally_status = "✅" if settings.get('payment_method_pally_enabled') else "❌"
+    crypto_status = "✅" if settings.get('payment_method_crypto_enabled') else "❌"
 
     markup.add(InlineKeyboardButton(
         f"{KEY_MARKUP['USERS_BOT_SETTINGS_PAYMENT_METHOD_CARD']} | {card_status}",
@@ -659,8 +693,90 @@ def payment_methods_settings_markup(settings):
         f"{KEY_MARKUP['USERS_BOT_SETTINGS_PAYMENT_METHOD_PALLY']} | {pally_status}",
         callback_data=f"users_bot_settings_payment_pally:{int(bool(settings.get('payment_method_pally_enabled', 0)))}",
     ))
+    markup.add(InlineKeyboardButton(
+        f"🪙 Криптовалюта | {crypto_status}",
+        callback_data=f"users_bot_settings_payment_crypto:{int(bool(settings.get('payment_method_crypto_enabled', 0)))}",
+    ))
 
     markup.add(InlineKeyboardButton(KEY_MARKUP['USERS_BOT_SETTINGS_YOOKASSA'], callback_data="users_bot_settings_yookassa:None"))
+    markup.add(InlineKeyboardButton("🪙 CryptoPay настройки", callback_data="users_bot_settings_cryptopay:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['PALLY_SET_URL'], callback_data="pally_set_url:None"))
     markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_settings:None"))
+    return add_title_menu_button(markup)
+
+
+def mtproto_proxy_settings_markup():
+    """Admin markup for MTProto proxy management."""
+    from config import MTPROTO_ENABLED, MTPROTO_SERVER, MTPROTO_PORT, MTPROTO_SECRET
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    status = "✅ Включён" if MTPROTO_ENABLED else "❌ Выключен"
+    toggle_val = "0" if MTPROTO_ENABLED else "1"
+    markup.add(InlineKeyboardButton(
+        f"📡 MTProto Proxy | {status}",
+        callback_data=f"mtproto_toggle:{toggle_val}",
+    ))
+    markup.add(InlineKeyboardButton("🌐 Сервер (IP)", callback_data="mtproto_set_server:None"))
+    markup.add(InlineKeyboardButton("🔌 Порт", callback_data="mtproto_set_port:None"))
+    markup.add(InlineKeyboardButton("🔑 Секрет", callback_data="mtproto_set_secret:None"))
+    markup.add(InlineKeyboardButton("🏷 Promote Tag", callback_data="mtproto_set_promote:None"))
+    if MTPROTO_ENABLED and MTPROTO_SERVER and MTPROTO_SECRET:
+        markup.add(InlineKeyboardButton("🔗 Показать ссылку прокси", callback_data="mtproto_show_link:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_settings:None"))
+    return add_title_menu_button(markup)
+
+
+def whatsapp_proxy_settings_markup():
+    """Admin markup for WhatsApp proxy management."""
+    from config import WHATSAPP_PROXY_ENABLED, WHATSAPP_PROXY_SERVER
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    status = "✅ Включён" if WHATSAPP_PROXY_ENABLED else "❌ Выключен"
+    toggle_val = "0" if WHATSAPP_PROXY_ENABLED else "1"
+    markup.add(InlineKeyboardButton(
+        f"📱 WhatsApp Proxy | {status}",
+        callback_data=f"wa_proxy_toggle:{toggle_val}",
+    ))
+    markup.add(InlineKeyboardButton("🌐 Сервер (IP)", callback_data="wa_proxy_set_server:None"))
+    if WHATSAPP_PROXY_ENABLED and WHATSAPP_PROXY_SERVER:
+        markup.add(InlineKeyboardButton("🔗 Показать адрес прокси", callback_data="wa_proxy_show_address:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_settings:None"))
+    return add_title_menu_button(markup)
+
+
+def signal_proxy_settings_markup():
+    """Admin markup for Signal proxy management."""
+    from config import SIGNAL_PROXY_ENABLED, SIGNAL_PROXY_DOMAIN
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 1
+    status = "✅ Включён" if SIGNAL_PROXY_ENABLED else "❌ Выключен"
+    toggle_val = "0" if SIGNAL_PROXY_ENABLED else "1"
+    markup.add(InlineKeyboardButton(
+        f"🔐 Signal Proxy | {status}",
+        callback_data=f"signal_proxy_toggle:{toggle_val}",
+    ))
+    markup.add(InlineKeyboardButton("🌐 Домен", callback_data="signal_proxy_set_domain:None"))
+    if SIGNAL_PROXY_ENABLED and SIGNAL_PROXY_DOMAIN:
+        link = f"https://signal.tube/#{SIGNAL_PROXY_DOMAIN}"
+        markup.add(InlineKeyboardButton("🔗 Показать ссылку", callback_data="signal_proxy_show_link:None"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_settings:None"))
+    return add_title_menu_button(markup)
+
+
+def admin_stats_dashboard_markup(active="overview"):
+    """Inline markup for admin statistics dashboard navigation."""
+    markup = InlineKeyboardMarkup()
+    markup.row_width = 2
+    sections = [
+        ("📊 Обзор", "overview"),
+        ("👥 Пользователи", "users"),
+        ("💰 Финансы", "finance"),
+        ("📱 Устройства", "devices"),
+        ("🔗 Форматы подписок", "subscriptions"),
+    ]
+    for label, key in sections:
+        prefix = "◉ " if key == active else ""
+        markup.add(InlineKeyboardButton(f"{prefix}{label}", callback_data=f"admin_stats_dashboard:{key}"))
+    markup.add(InlineKeyboardButton("🔄 Обновить", callback_data=f"admin_stats_dashboard:{active}"))
+    markup.add(InlineKeyboardButton(KEY_MARKUP['BACK'], callback_data="users_bot_management_menu:None"))
     return add_title_menu_button(markup)
