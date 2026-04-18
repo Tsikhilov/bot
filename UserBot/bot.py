@@ -1814,7 +1814,7 @@ def buy_subscription(message: Message):
     if not join_status:
         return
     settings = utils.all_configs_settings()
-    if not settings['buy_subscription_status']:
+    if not settings.get('buy_subscription_status'):
         bot.send_message(message.chat.id, MESSAGES['BUY_SUBSCRIPTION_CLOSED'], reply_markup=main_menu_keyboard_markup())
         return
     wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
@@ -1879,7 +1879,7 @@ def faq(message: Message):
     if not join_status:
         return
     settings = utils.all_configs_settings()
-    faq_msg = settings['msg_faq'] if settings['msg_faq'] else MESSAGES['UNKNOWN_ERROR']
+    faq_msg = settings.get('msg_faq') or MESSAGES['UNKNOWN_ERROR']
     bot.send_message(message.chat.id, faq_msg, reply_markup=main_menu_keyboard_markup())
 
 
@@ -1942,7 +1942,7 @@ def free_test(message: Message):
     if not join_status:
         return
     settings = utils.all_configs_settings()
-    if not settings['test_subscription']:
+    if not settings.get('test_subscription'):
         bot.send_message(message.chat.id, MESSAGES['FREE_TEST_NOT_AVAILABLE'], reply_markup=main_menu_keyboard_markup())
         return
     users = USERS_DB.find_user(telegram_id=message.chat.id)

@@ -14,7 +14,7 @@ def main_menu_keyboard_markup():
     markup.add(KeyboardButton(KEY_MARKUP['FREE_TEST']), KeyboardButton(KEY_MARKUP['WALLET']))
     # KeyboardButton(KEY_MARKUP['TO_QR']),
     settings = all_configs_settings()
-    if settings['msg_faq']:
+    if settings.get('msg_faq'):
         markup.add(KeyboardButton(KEY_MARKUP['SEND_TICKET']),
                    KeyboardButton(KEY_MARKUP['MANUAL']), KeyboardButton(KEY_MARKUP['FAQ']))
     else:
@@ -38,21 +38,21 @@ def sub_url_user_list_markup(uuid):
     markup = InlineKeyboardMarkup()
     markup.row_width = 2
     settings = all_configs_settings()
-    if settings['visible_conf_dir']:
+    if settings.get('visible_conf_dir'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_DIR'], callback_data=f"conf_dir:{uuid}"))
-    if settings['visible_conf_sub_auto']:
+    if settings.get('visible_conf_sub_auto'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_SUB_AUTO'], callback_data=f"conf_sub_auto:{uuid}"))
-    if settings['visible_conf_sub_url']:
+    if settings.get('visible_conf_sub_url'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_SUB'], callback_data=f"conf_sub_url:{uuid}"))
-    if settings['visible_conf_sub_url_b64']:
+    if settings.get('visible_conf_sub_url_b64'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_SUB_B64'], callback_data=f"conf_sub_url_b64:{uuid}"))
-    if settings['visible_conf_clash']:
+    if settings.get('visible_conf_clash'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_CLASH'], callback_data=f"conf_clash:{uuid}"))
-    if settings['visible_conf_hiddify']:
+    if settings.get('visible_conf_hiddify'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_HIDDIFY'], callback_data=f"conf_hiddify:{uuid}"))
-    if settings['visible_conf_sub_sing_box']:
+    if settings.get('visible_conf_sub_sing_box'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_SING_BOX'], callback_data=f"conf_sub_sing_box:{uuid}"))
-    if settings['visible_conf_sub_full_sing_box']:
+    if settings.get('visible_conf_sub_full_sing_box'):
         markup.add(InlineKeyboardButton(KEY_MARKUP['CONFIGS_FULL_SING_BOX'],
                                         callback_data=f"conf_sub_full_sing_box:{uuid}"))
 
