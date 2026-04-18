@@ -299,16 +299,16 @@ def buy_from_wallet_confirm(message: Message, plan):
         # Wallet not created
         bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],
                          reply_markup=wallet_info_markup())
-    if wallet:
-        wallet = wallet[0]
-        if plan['price'] > wallet['balance']:
-            bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],
-                             reply_markup=wallet_info_specific_markup(plan['price'] - wallet['balance']))
-            return
-        else:
-            bot.delete_message(message.chat.id, message.message_id)
-            bot.send_message(message.chat.id, MESSAGES['REQUEST_SEND_NAME'], reply_markup=cancel_markup())
-            bot.register_next_step_handler(message, next_step_send_name_for_buy_from_wallet, plan)
+        return
+    wallet = wallet[0]
+    if plan['price'] > wallet['balance']:
+        bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],
+                         reply_markup=wallet_info_specific_markup(plan['price'] - wallet['balance']))
+        return
+    else:
+        bot.delete_message(message.chat.id, message.message_id)
+        bot.send_message(message.chat.id, MESSAGES['REQUEST_SEND_NAME'], reply_markup=cancel_markup())
+        bot.register_next_step_handler(message, next_step_send_name_for_buy_from_wallet, plan)
 
 
 def renewal_from_wallet_confirm(message: Message):
@@ -330,6 +330,10 @@ def renewal_from_wallet_confirm(message: Message):
     if not wallet:
         status = USERS_DB.add_wallet(telegram_id=message.chat.id)
         if not status:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+            return
+        wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
+        if not wallet:
             bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
             return
 
