@@ -80,6 +80,16 @@ Card owner <b>{card_holder_name}</b>
 
 ❗️After paying the amount, send us a screenshot of the transaction.
 """
+    else:
+        return f"""
+{header}
+
+💰Оплатите ровно: <code>{price}</code> {MESSAGES['TOMAN']}
+💳На карту: <code>{card_number}</code>
+👤Получатель: <b>{card_holder_name}</b>
+
+❗️После оплаты отправьте нам скриншот транзакции.
+"""
 
 
 # Payment Received Template - Send to Admin
@@ -113,6 +123,19 @@ Paid amount: <b>{payment['payment_amount']}</b> {MESSAGES['TOMAN']}
 {MESSAGES['INFO_USER_NUM_ID']} {user['telegram_id']}
 ---------------------
 ⬇️Request to increase wallet balance⬇️
+
+"""
+    else:
+        return f"""
+{header}
+
+Номер платежа: <b>{payment['id']}</b>
+Сумма: <b>{payment['payment_amount']}</b> {MESSAGES['TOMAN']}
+{MESSAGES['INFO_USER_NAME']} <b>{name}</b>
+{MESSAGES['INFO_USER_USERNAME']} {username}
+{MESSAGES['INFO_USER_NUM_ID']} {user['telegram_id']}
+---------------------
+⬇️Запрос на пополнение кошелька⬇️
 
 """
 
@@ -238,4 +261,11 @@ def renewal_unvalable_template(settings):
 To renew your subscription, one of the following conditions must be met:
 1- Less than {settings['advanced_renewal_days']} days left until your subscription expires.
 2- The remaining volume of your subscription is less than {settings['advanced_renewal_usage']} GB.
+"""
+    else:
+        return f"""
+🛑Вы не можете продлить подписку сейчас.
+Для продления должно выполняться одно из условий:
+1- До окончания подписки осталось менее {settings['advanced_renewal_days']} дней.
+2- Остаток трафика менее {settings['advanced_renewal_usage']} ГБ.
 """
