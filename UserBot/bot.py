@@ -2,6 +2,7 @@ import datetime
 import random
 import os
 import time
+import threading
 from urllib.parse import urlparse
 
 import telebot
@@ -91,6 +92,87 @@ def is_user_banned(user_id):
 # ----------------------------------- Buy Plan Area -----------------------------------
 charge_wallet = {}        # per-user payment state: {chat_id: {'id': ..., 'amount': ...}}
 renew_subscription_dict = {}
+
+# ----------------------------------- Expiry Notification Scheduler -----------------------------------
+_notified_today: set = set()       # (telegram_id, uuid) pairs notified this calendar day
+_notified_date: str = ""           # date string when _notified_today was last reset
+
+_NOTIFY_INTERVAL_SEC = 3600        # run every hour
+_EXPIRY_WARN_DAYS = 3              # warn when ≤ 3 days remain
+
+
+def _check_expiry_notifications():
+    """Background thread: notify users whose subscriptions are expiring or expired."""
+    global _notified_today, _notified_date
+
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    if today_str != _notified_date:
+        _notified_today = set()
+        _notified_date = today_str
+
+    try:
+        subs = USERS_DB.select_order_subscription()
+        if not subs:
+            return
+
+        all_server_rows = USERS_DB.select_servers() or []
+        server_map = {s['id']: s for s in all_server_rows}
+
+        for sub in subs:
+            telegram_id = sub.get('telegram_id')
+            uuid = sub.get('uuid')
+            if not telegram_id or not uuid:
+                continue
+            key = (telegram_id, uuid)
+            if key in _notified_today:
+                continue
+
+            server_id = sub.get('server_id')
+            server = server_map.get(server_id)
+            if not server:
+                server_rows = USERS_DB.find_server(id=server_id)
+                if not server_rows:
+                    continue
+                server = server_rows[0]
+
+            try:
+                URL = server['url'] + API_PATH
+                user = api.find(URL, uuid=uuid)
+                if not user:
+                    continue
+                user_info = utils.users_to_dict([user])
+                if not user_info:
+                    continue
+                processed = utils.dict_process(URL, user_info)
+                if not processed:
+                    continue
+                processed = processed[0]
+                remaining_day = processed.get('remaining_day', 9999)
+            except Exception as e:
+                logging.debug("Expiry check error for sub %s: %s", sub.get('id'), e)
+                continue
+
+            if remaining_day <= 0:
+                msg = MESSAGES.get('SUBSCRIPTION_EXPIRED', '🔴 Ваша подписка истекла! Продлите её.')
+            elif remaining_day <= _EXPIRY_WARN_DAYS:
+                msg = MESSAGES.get('SUBSCRIPTION_EXPIRING_SOON', '⚠️ Подписка истекает через {days} дн.').format(days=remaining_day)
+            else:
+                continue
+
+            try:
+                markup = user_info_markup(uuid)
+                bot.send_message(telegram_id, msg, reply_markup=markup)
+                _notified_today.add(key)
+                logging.info("Expiry notify sent to %s (uuid=%s, remaining=%s)", telegram_id, uuid, remaining_day)
+            except Exception as e:
+                logging.warning("Failed to send expiry notify to %s: %s", telegram_id, e)
+
+    except Exception as e:
+        logging.error("Expiry notification check failed: %s", e, exc_info=True)
+    finally:
+        t = threading.Timer(_NOTIFY_INTERVAL_SEC, _check_expiry_notifications)
+        t.daemon = True
+        t.start()
 
 
 def user_channel_status(user_id):
@@ -2068,6 +2150,11 @@ def start():
             logging.warning(f"Error in send message to admin {admin}: {e}")
     bot.enable_save_next_step_handlers()
     bot.load_next_step_handlers()
+    # Start subscription expiry notification background thread
+    t = threading.Timer(60, _check_expiry_notifications)   # first run after 60s
+    t.daemon = True
+    t.start()
+    logging.info("Subscription expiry notification scheduler started (interval=%ds)", _NOTIFY_INTERVAL_SEC)
     while True:
         try:
             bot.infinity_polling()
