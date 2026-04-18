@@ -531,7 +531,16 @@ def privacy_friendly_logging_request(url):
     return url
 
 
+_settings_cache = {'data': None, 'ts': 0.0}
+_SETTINGS_TTL = 30.0  # seconds
+
+
 def all_configs_settings():
+    import time
+    now = time.monotonic()
+    if _settings_cache['data'] is not None and (now - _settings_cache['ts']) < _SETTINGS_TTL:
+        return _settings_cache['data']
+
     bool_configs = USERS_DB.select_bool_config()
     int_configs = USERS_DB.select_int_config()
     str_configs = USERS_DB.select_str_config()
@@ -553,7 +562,15 @@ def all_configs_settings():
     if yookassa_secret:
         all_configs['yookassa_secret_key'] = yookassa_secret[0]['value']
 
+    _settings_cache['data'] = all_configs
+    _settings_cache['ts'] = now
     return all_configs
+
+
+def invalidate_settings_cache():
+    """Call after any admin change to settings to force immediate refresh."""
+    _settings_cache['data'] = None
+    _settings_cache['ts'] = 0.0
 
 
 def find_order_subscription_by_uuid(uuid):
