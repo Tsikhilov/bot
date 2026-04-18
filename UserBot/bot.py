@@ -978,6 +978,16 @@ def update_info_subscription(message: Message, uuid,markup=None):
 # *********************************** Callback Query Area ***********************************
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call: CallbackQuery):
+    try:
+        _handle_callback_query(call)
+    except Exception as e:
+        logging.error("callback_query unhandled error for %s: %s", call.data, e, exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, MESSAGES.get('UNKNOWN_ERROR', '⚠️ Ошибка'), show_alert=True)
+        except Exception:
+            pass
+
+def _handle_callback_query(call: CallbackQuery):
     bot.answer_callback_query(call.id, MESSAGES['WAIT'])
     bot.clear_step_handler(call.message)
     if is_user_banned(call.message.chat.id):

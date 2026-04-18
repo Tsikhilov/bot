@@ -1179,6 +1179,16 @@ def users_bot_send_message_to_user(message: Message, telegram_id):
 # Callback Handler for Inline Buttons
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call: CallbackQuery):
+    try:
+        _handle_admin_callback(call)
+    except Exception as e:
+        logging.error("admin callback_query error for %s: %s", call.data, e, exc_info=True)
+        try:
+            bot.answer_callback_query(call.id, MESSAGES.get('ERROR_UNKNOWN', '⚠️ Ошибка'), show_alert=True)
+        except Exception:
+            pass
+
+def _handle_admin_callback(call: CallbackQuery):
     logging.info(f"Callback Query: {call.data}")
     bot.answer_callback_query(call.id, MESSAGES['WAIT'])
     # Check if user is not admin
