@@ -759,6 +759,8 @@ def next_step_send_name_for_buy_from_wallet(message: Message, plan):
                      reply_markup=main_menu_keyboard_markup())
     
     user_info = api.find(URL, value)
+    if not user_info:
+        return
     user_info = utils.users_to_dict([user_info])
     user_info = utils.dict_process(URL, user_info)
     user_info = user_info[0]
@@ -825,6 +827,8 @@ def next_step_send_name_for_get_free_test(message: Message, server_id):
     bot.send_message(message.chat.id, MESSAGES['GET_FREE_CONFIRMED'],
                      reply_markup=main_menu_keyboard_markup())
     user_info = api.find(URL, uuid)
+    if not user_info:
+        return
     user_info = utils.users_to_dict([user_info])
     user_info = utils.dict_process(URL, user_info)
     user_info = user_info[0]
