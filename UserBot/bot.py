@@ -321,151 +321,149 @@ def renewal_from_wallet_confirm(message: Message):
     if not user_renew.get('plan_id') or not user_renew.get('uuid'):
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                          reply_markup=main_menu_keyboard_markup())
+        renew_subscription_dict.pop(message.chat.id, None)
         return
 
     uuid = user_renew['uuid']
     plan_id = user_renew['plan_id']
 
-    wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
-    if not wallet:
-        status = USERS_DB.add_wallet(telegram_id=message.chat.id)
-        if not status:
-            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
-            return
+    try:
         wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
         if not wallet:
-            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+            status = USERS_DB.add_wallet(telegram_id=message.chat.id)
+            if not status:
+                bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+                return
+            wallet = USERS_DB.find_wallet(telegram_id=message.chat.id)
+            if not wallet:
+                bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'])
+                return
+
+        wallet = wallet[0]
+        plan_info = USERS_DB.find_plan(id=plan_id)
+        if not plan_info:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
             return
 
-    wallet = wallet[0]
-    plan_info = USERS_DB.find_plan(id=plan_id)
-    if not plan_info:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
+        plan_info = plan_info[0]
+        if plan_info['price'] > wallet['balance']:
+            bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],reply_markup=wallet_info_specific_markup(plan_info['price'] - wallet['balance']))
+            return
 
-    plan_info = plan_info[0]
-    if plan_info['price'] > wallet['balance']:
-        bot.send_message(message.chat.id, MESSAGES['LACK_OF_WALLET_BALANCE'],reply_markup=wallet_info_specific_markup(plan_info['price'] - wallet['balance']))
-        del renew_subscription_dict[message.chat.id]
-        return
+        server_id = plan_info['server_id']
+        server = USERS_DB.find_server(id=server_id)
+        if not server:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        server = server[0]
+        URL = server['url'] + API_PATH
+        user = api.find(URL, uuid=uuid)
+        if not user:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
 
-    server_id = plan_info['server_id']
-    server = USERS_DB.find_server(id=server_id)
-    if not server:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
-    server = server[0]
-    URL = server['url'] + API_PATH
-    user = api.find(URL, uuid=uuid)
-    if not user:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
+        user_info = utils.users_to_dict([user])
+        if not user_info:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
 
-    user_info = utils.users_to_dict([user])
-    if not user_info:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
+        user_info_process = utils.dict_process(URL, user_info)
+        user_info = user_info[0]
 
-    user_info_process = utils.dict_process(URL, user_info)
-    user_info = user_info[0]
+        if not user_info_process:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        user_info_process = user_info_process[0]
+        new_balance = int(wallet['balance']) - int(plan_info['price'])
+        edit_wallet = USERS_DB.edit_wallet(message.chat.id, balance=new_balance)
+        if not edit_wallet:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
+        last_reset_time = datetime.datetime.now().strftime("%Y-%m-%d")    
+        sub = utils.find_order_subscription_by_uuid(uuid) 
+        if not sub:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return   
+        settings = utils.all_configs_settings()
+        #Default renewal mode
+        if settings.get('renewal_method') == 1:
+            if user_info_process['remaining_day'] <= 0 or user_info_process['usage']['remaining_usage_GB'] <= 0:
+                new_usage_limit = plan_info['size_gb']
+                new_package_days = plan_info['days']
+                current_usage_GB = 0
+                edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
 
-    if not user_info_process:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
-    user_info_process = user_info_process[0]
-    new_balance = int(wallet['balance']) - int(plan_info['price'])
-    edit_wallet = USERS_DB.edit_wallet(message.chat.id, balance=new_balance)
-    if not edit_wallet:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
-    last_reset_time = datetime.datetime.now().strftime("%Y-%m-%d")    
-    sub = utils.find_order_subscription_by_uuid(uuid) 
-    if not sub:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return   
-    settings = utils.all_configs_settings()
-    #Default renewal mode
-    if settings.get('renewal_method') == 1:
-        if user_info_process['remaining_day'] <= 0 or user_info_process['usage']['remaining_usage_GB'] <= 0:
-            new_usage_limit = plan_info['size_gb']
-            new_package_days = plan_info['days']
-            current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
-
-        else:
-            new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
-            new_package_days = plan_info['days'] + (user_info['package_days'] - user_info_process['remaining_day'])
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
+            else:
+                new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
+                new_package_days = plan_info['days'] + (user_info['package_days'] - user_info_process['remaining_day'])
+                edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
 
 
-    #advance renewal mode        
-    elif settings.get('renewal_method') == 2:
-            new_usage_limit = plan_info['size_gb']
-            new_package_days = plan_info['days']
-            current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, start_date=last_reset_time, package_days=new_package_days, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
+        #advance renewal mode        
+        elif settings.get('renewal_method') == 2:
+                new_usage_limit = plan_info['size_gb']
+                new_package_days = plan_info['days']
+                current_usage_GB = 0
+                edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, start_date=last_reset_time, package_days=new_package_days, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
 
-    
-    #Fair renewal mode
-    elif settings.get('renewal_method') == 3:
-        if user_info_process['remaining_day'] <= 0 or user_info_process['usage']['remaining_usage_GB'] <= 0:
-            new_usage_limit = plan_info['size_gb']
-            new_package_days = plan_info['days']
-            current_usage_GB = 0
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
-        else:
-            logging.debug("user_info for fair renewal: %s", user_info)
-            new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
-            new_package_days = plan_info['days'] + user_info['package_days']
-            edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit,package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
+        
+        #Fair renewal mode
+        elif settings.get('renewal_method') == 3:
+            if user_info_process['remaining_day'] <= 0 or user_info_process['usage']['remaining_usage_GB'] <= 0:
+                new_usage_limit = plan_info['size_gb']
+                new_package_days = plan_info['days']
+                current_usage_GB = 0
+                edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days,start_date=last_reset_time, current_usage_GB=current_usage_GB,comment=f"HidyBot:{sub['id']}")
+            else:
+                logging.debug("user_info for fair renewal: %s", user_info)
+                new_usage_limit = user_info['usage_limit_GB'] + plan_info['size_gb']
+                new_package_days = plan_info['days'] + user_info['package_days']
+                edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit,package_days=new_package_days,last_reset_time=last_reset_time,comment=f"HidyBot:{sub['id']}")
 
-            
+                
 
-    if not edit_status:
-        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-                         reply_markup=main_menu_keyboard_markup())
-        return
+        if not edit_status:
+            bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                             reply_markup=main_menu_keyboard_markup())
+            return
 
-    # Add New Order
-    order_id = random.randint(1000000, 9999999)
-    created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    status = USERS_DB.add_order(order_id, message.chat.id,user_info_process['name'], plan_id, created_at)
-    if not status:
-        bot.send_message(message.chat.id,
-                         f"{MESSAGES['UNKNOWN_ERROR']}\n{MESSAGES['ORDER_ID']} {order_id}",
-                         reply_markup=main_menu_keyboard_markup())
-        return
-    # edit_status = ADMIN_DB.edit_user(uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days)
-    # edit_status = api.update(URL, uuid=uuid, usage_limit_GB=new_usage_limit, package_days=new_package_days)
-    # if not edit_status:
-    #     bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
-    #                      reply_markup=main_menu_keyboard_markup())
-    #     return
+        # Add New Order
+        order_id = random.randint(1000000, 9999999)
+        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = USERS_DB.add_order(order_id, message.chat.id,user_info_process['name'], plan_id, created_at)
+        if not status:
+            bot.send_message(message.chat.id,
+                             f"{MESSAGES['UNKNOWN_ERROR']}\n{MESSAGES['ORDER_ID']} {order_id}",
+                             reply_markup=main_menu_keyboard_markup())
+            return
 
-    bot.send_message(message.chat.id, MESSAGES['SUCCESSFUL_RENEWAL'], reply_markup=main_menu_keyboard_markup())
-    update_info_subscription(message, uuid)
-    BASE_URL = urlparse(server['url']).scheme + "://" + urlparse(server['url']).netloc
-    link = f"{BASE_URL}/{urlparse(server['url']).path.split('/')[1]}/{uuid}/"
-    user_name = f"<a href='{link}'> {user_info_process['name']} </a>"
-    bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
-    if not bot_users:
-        return
-    bot_user = bot_users[0]
-    for ADMIN in ADMINS_ID:
-        try:
-            admin_bot.send_message(ADMIN,
-                                   f"""{MESSAGES['ADMIN_NOTIFY_NEW_RENEWAL']} {user_name} {MESSAGES['ADMIN_NOTIFY_NEW_RENEWAL_2']}
+        bot.send_message(message.chat.id, MESSAGES['SUCCESSFUL_RENEWAL'], reply_markup=main_menu_keyboard_markup())
+        update_info_subscription(message, uuid)
+        BASE_URL = urlparse(server['url']).scheme + "://" + urlparse(server['url']).netloc
+        link = f"{BASE_URL}/{urlparse(server['url']).path.split('/')[1]}/{uuid}/"
+        user_name = f"<a href='{link}'> {user_info_process['name']} </a>"
+        bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
+        if not bot_users:
+            logging.warning("renewal_from_wallet_confirm: user %s not found for admin notify", message.chat.id)
+            return
+        bot_user = bot_users[0]
+        for ADMIN in ADMINS_ID:
+            try:
+                admin_bot.send_message(ADMIN,
+                                       f"""{MESSAGES['ADMIN_NOTIFY_NEW_RENEWAL']} {user_name} {MESSAGES['ADMIN_NOTIFY_NEW_RENEWAL_2']}
 {MESSAGES['SERVER']}<a href='{server['url']}/admin'> {server['title']} </a>
 {MESSAGES['INFO_ID']} <code>{sub['id']}</code>""", reply_markup=notify_to_admin_markup(bot_user))
-        except Exception as e:
-            logging.warning("admin_bot notify renewal failed for %s: %s", ADMIN, e)
+            except Exception as e:
+                logging.warning("admin_bot notify renewal failed for %s: %s", ADMIN, e)
+    finally:
+        renew_subscription_dict.pop(message.chat.id, None)
 
 
 # Next Step Buy Plan - Send Screenshot
@@ -553,6 +551,8 @@ def next_step_send_ticket_to_admin(message):
         return
     bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
     if not bot_users:
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                         reply_markup=main_menu_keyboard_markup())
         return
     bot_user = bot_users[0]
     for ADMIN in ADMINS_ID:
@@ -762,6 +762,8 @@ def next_step_send_name_for_buy_from_wallet(message: Message, plan):
         return
     user_info = utils.users_to_dict([user_info])
     user_info = utils.dict_process(URL, user_info)
+    if not user_info:
+        return
     user_info = user_info[0]
     api_user_data = user_info_template(sub_id, server, user_info, MESSAGES['INFO_USER'])
     bot.send_message(message.chat.id, api_user_data,
@@ -772,6 +774,7 @@ def next_step_send_name_for_buy_from_wallet(message: Message, plan):
     user_name = f"<a href='{link}'> {name} </a>"
     bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
     if not bot_users:
+        logging.warning("next_step_send_name_for_buy_from_wallet: user %s not found for admin notify", message.chat.id)
         return
     bot_user = bot_users[0]
     for ADMIN in ADMINS_ID:
@@ -839,6 +842,7 @@ def next_step_send_name_for_get_free_test(message: Message, server_id):
     user_name = f"<a href='{link}'> {name} </a>"
     bot_users = USERS_DB.find_user(telegram_id=message.chat.id)
     if not bot_users:
+        logging.warning("next_step_send_name_for_get_free_test: user %s not found for admin notify", message.chat.id)
         return
     bot_user = bot_users[0]
     for ADMIN in ADMINS_ID:
@@ -987,7 +991,12 @@ def update_info_subscription(message: Message, uuid,markup=None):
         bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
                          reply_markup=main_menu_keyboard_markup())
         return
-    user = utils.dict_process(URL, utils.users_to_dict([user]))[0]
+    user = utils.dict_process(URL, utils.users_to_dict([user]))
+    if not user:
+        bot.send_message(message.chat.id, MESSAGES['UNKNOWN_ERROR'],
+                         reply_markup=main_menu_keyboard_markup())
+        return
+    user = user[0]
     try:
         bot.edit_message_text(chat_id=message.chat.id, message_id=message.message_id,
                               text=user_info_template(sub['id'], server, user, MESSAGES['INFO_USER']),
@@ -1015,6 +1024,9 @@ def _handle_callback_query(call: CallbackQuery):
         return
     # Split Callback Data to Key(Command) and UUID
     data = call.data.split(':')
+    if len(data) < 2:
+        logging.warning("Invalid callback data (no ':' separator): %s", call.data)
+        return
     key = data[0]
     value = data[1]
 
