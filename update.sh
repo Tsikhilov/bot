@@ -104,8 +104,6 @@ function update_bot() {
       display_message "${RED}Failed to update the bot. Check the Git repository for errors.${RESET}"
       exit 1
     fi
-    display_message "${RED}Failed to update the bot. Check the Git repository for errors.${RESET}"
-    exit 1
   fi
 }
 
