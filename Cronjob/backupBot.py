@@ -1,6 +1,7 @@
 from Utils.utils import all_configs_settings, backup_json_bot
 from AdminBot.bot import bot
 from config import ADMINS_ID
+import logging
 try:
     bot.remove_webhook()
 except:
@@ -14,4 +15,8 @@ def cron_backup_bot():
         return
     if file_name:
         for admin_id in ADMINS_ID:
-            bot.send_document(admin_id, open(file_name, 'rb'), caption="🤖Bot Backup",disable_notification=True)
+            try:
+                with open(file_name, 'rb') as f:
+                    bot.send_document(admin_id, f, caption="🤖Bot Backup",disable_notification=True)
+            except Exception as e:
+                logging.warning(f"Bot backup send failed for admin {admin_id}: {e}")

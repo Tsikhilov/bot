@@ -1,6 +1,7 @@
 from Utils.utils import *
 from UserBot.bot import bot
-from config import CLIENT_TOKEN
+from config import CLIENT_TOKEN, LANG
+import logging
 import sqlite3
 from datetime import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -49,7 +50,7 @@ def _mark_sent(conn, telegram_id, uuid, event_key):
 def _renewal_markup(uuid):
     markup = InlineKeyboardMarkup()
     markup.row_width = 1
-    markup.add(InlineKeyboardButton("💰 Продлить подписку", callback_data=f"velvet_sub_open:{uuid}"))
+    markup.add(InlineKeyboardButton("💰 Продлить подписку", callback_data=f"smartkamavpn_sub_open:{uuid}"))
     return markup
 
 
@@ -113,41 +114,54 @@ def cron_reminder():
         return
 
     conn = sqlite3.connect(USERS_DB_LOC)
-    _ensure_reminders_table(conn)
+    try:
+        _ensure_reminders_table(conn)
 
-    telegram_users = USERS_DB.select_users()
-    if telegram_users:
-        for user in telegram_users:
-            user_telegram_id = user['telegram_id']
-            user_subscriptions_list = non_order_user_info(user_telegram_id) + order_user_info(user_telegram_id)
-            if user_subscriptions_list:
-                for user_subscription in user_subscriptions_list:
-                    package_days = user_subscription.get('remaining_day', 0)
-                    package_gb = user_subscription.get('usage', {}).get('remaining_usage_GB', 0)
-                    sub_id = user_subscription.get('sub_id')
-                    uuid = user_subscription.get('uuid')
-                    if not uuid:
-                        continue
+        telegram_users = USERS_DB.select_users()
+        if telegram_users:
+            for user in telegram_users:
+                user_telegram_id = user['telegram_id']
+                user_subscriptions_list = non_order_user_info(user_telegram_id) + order_user_info(user_telegram_id)
+                if user_subscriptions_list:
+                    for user_subscription in user_subscriptions_list:
+                        package_days = user_subscription.get('remaining_day', 0)
+                        package_gb = user_subscription.get('usage', {}).get('remaining_usage_GB', 0)
+                        sub_id = user_subscription.get('sub_id')
+                        uuid = user_subscription.get('uuid')
+                        if not uuid:
+                            continue
 
-                    if package_days <= 0:
-                        event_key = 'expired_once'
-                        if not _was_sent(conn, user_telegram_id, uuid, event_key):
-                            bot.send_message(user_telegram_id, _msg_expired(sub_id), reply_markup=_renewal_markup(uuid))
-                            _mark_sent(conn, user_telegram_id, uuid, event_key)
-                        continue
+                        if package_days <= 0:
+                            event_key = 'expired_once'
+                            if not _was_sent(conn, user_telegram_id, uuid, event_key):
+                                try:
+                                    bot.send_message(user_telegram_id, _msg_expired(sub_id), reply_markup=_renewal_markup(uuid))
+                                except Exception as e:
+                                    logging.warning(f"Reminder send failed for {user_telegram_id}: {e}")
+                                    continue
+                                _mark_sent(conn, user_telegram_id, uuid, event_key)
+                            continue
 
-                    # Time-based reminders: at configured threshold and at 1 day left.
-                    if package_days in (int(ALERT_PACKAGE_DAYS), 1):
-                        event_key = f'days_left_{int(package_days)}'
-                        if not _was_sent(conn, user_telegram_id, uuid, event_key):
-                            bot.send_message(user_telegram_id, _msg_days_left(sub_id, int(package_days)), reply_markup=_renewal_markup(uuid))
-                            _mark_sent(conn, user_telegram_id, uuid, event_key)
+                        # Time-based reminders: at configured threshold and at 1 day left.
+                        if package_days in (int(ALERT_PACKAGE_DAYS), 1):
+                            event_key = f'days_left_{int(package_days)}'
+                            if not _was_sent(conn, user_telegram_id, uuid, event_key):
+                                try:
+                                    bot.send_message(user_telegram_id, _msg_days_left(sub_id, int(package_days)), reply_markup=_renewal_markup(uuid))
+                                except Exception as e:
+                                    logging.warning(f"Reminder send failed for {user_telegram_id}: {e}")
+                                    continue
+                                _mark_sent(conn, user_telegram_id, uuid, event_key)
 
-                    # Traffic-based reminder once when below threshold.
-                    if alert_package_gb(package_gb):
-                        event_key = 'traffic_low_once'
-                        if not _was_sent(conn, user_telegram_id, uuid, event_key):
-                            bot.send_message(user_telegram_id, _msg_gb_left(sub_id, float(package_gb or 0)), reply_markup=_renewal_markup(uuid))
-                            _mark_sent(conn, user_telegram_id, uuid, event_key)
-
-    conn.close()
+                        # Traffic-based reminder once when below threshold.
+                        if alert_package_gb(package_gb):
+                            event_key = 'traffic_low_once'
+                            if not _was_sent(conn, user_telegram_id, uuid, event_key):
+                                try:
+                                    bot.send_message(user_telegram_id, _msg_gb_left(sub_id, float(package_gb or 0)), reply_markup=_renewal_markup(uuid))
+                                except Exception as e:
+                                    logging.warning(f"Reminder send failed for {user_telegram_id}: {e}")
+                                    continue
+                                _mark_sent(conn, user_telegram_id, uuid, event_key)
+    finally:
+        conn.close()

@@ -16,6 +16,10 @@ def cron_backup():
     if not settings['panel_auto_backup']:
         return
     for admin_id in ADMINS_ID:
-        bot.send_document(admin_id, open(zip_file_name, 'rb'), caption="🤖Backup",disable_notification=True)
+        try:
+            with open(zip_file_name, 'rb') as f:
+                bot.send_document(admin_id, f, caption="🤖Backup",disable_notification=True)
+        except Exception as e:
+            logging.warning(f"Backup send failed for admin {admin_id}: {e}")
     
     
