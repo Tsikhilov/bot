@@ -206,12 +206,48 @@ def _send_velvet_main_menu(chat_id):
     if wallet:
         balance = int(wallet[0]['balance'])
 
+    # Build subscription status line with remaining days
+    max_days = 0
+    active_count = 0
+    total_subs = 0
+    try:
+        subs = _get_subscriptions_for_user(chat_id)
+        total_subs = len(subs)
+        for s in subs:
+            if s.get('active'):
+                active_count += 1
+                rd = s.get('remaining_day', 0) or 0
+                if rd > max_days:
+                    max_days = rd
+    except Exception:
+        pass
+
+    if active_count > 0:
+        days_int = int(max_days)
+        if days_int > 30:
+            days_emoji = "🟢"
+        elif days_int > 7:
+            days_emoji = "🟡"
+        else:
+            days_emoji = "🔴"
+        days_text = f"{days_int} дн." if days_int > 0 else "истекает сегодня"
+        sub_line = f"{days_emoji} Подписка: активна ({days_text})"
+        tip = f"⚠️ Осталось {days_int} дн. — не забудь продлить!" if days_int <= 7 else "✨ Всё работает! Приятного использования."
+    elif total_subs > 0:
+        sub_line = "🔴 Подписка: истекла"
+        tip = "⏰ Подписка истекла — продли или оформи новую."
+    else:
+        sub_line = "⚪ Подписка: не оформлена"
+        tip = "🎯 Попробуй бесплатный тест или оформи подписку!"
+
     msg = MESSAGES['VELVET_MAIN_MENU'].format(
         bonus=utils.rial_to_toman(balance),
         channel_link=_build_channel_link(settings),
         status_link=_build_status_link(settings),
+        sub_line=sub_line,
+        tip=tip,
     )
-    bot.send_message(chat_id, msg, reply_markup=main_menu_keyboard_markup())
+    bot.send_message(chat_id, msg, reply_markup=main_menu_keyboard_markup(), parse_mode="HTML")
 
 
 def _send_velvet_vpn_menu(chat_id):

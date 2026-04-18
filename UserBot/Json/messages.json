@@ -1,4 +1,4 @@
-{
+﻿{
   "RU": {
     "WELCOME": "Добро пожаловать в бот пользователей SmartKamaVPN",
     "INFO_USER": "📄Информация о вашей подписке",
@@ -109,7 +109,7 @@
     "YOOKASSA_PAYMENT_INFO": "💳Оплата через ЮKassa\nСумма: {amount}₽\nНажмите кнопку ниже для оплаты:",
     "YOOKASSA_CHECK_BUTTON": "🔄 Проверить оплату",
     "YOOKASSA_AMOUNT_INFO": "💰 Сумма: {amount}₽\n⏳ Платёж действителен 1 час",
-    "VELVET_MAIN_MENU": "Добро пожаловать в Velvet VPN.\n\nVPN, который просто работает: YouTube, Telegram, карты, ChatGPT.\n\n💰Бонусный баланс: {bonus} руб.\n\nУправление подписками: /subscriptions\n📣Новости: {channel_link}\n📊Статус системы: {status_link}",
+    "VELVET_MAIN_MENU": "🛡 <b>SmartKamaVPN</b>\n━━━━━━━━━━━━━━━━━━\n\n{sub_line}\n💰 Баланс: {bonus} руб.\n\n{tip}\n\nУправление подписками: /subscriptions\n📣 Новости: {channel_link}\n📊 Статус: {status_link}",
     "VELVET_VPN_MENU": "🏠 Главное -> Управление VPN\n\nВыберите VPN-конфигурацию для подключения и оплаты. Или создайте новую.",
     "VELVET_NO_SUBS": "Подписок пока нет. Нажмите «⚡Получить новую подписку».",
     "VELVET_SUB_CARD": "🏠 Главное -> Управление VPN -> Подписка #{sub_id}\n\n🔐Ваша VPN-подписка\n• ID: {sub_id}\n• Тип: {plan_type}\n• Осталось: {days} дн.\n\n🔗 {sub_link}\n\nЭто ссылка на вашу подписку. Её можно открыть для настройки и добавить в приложение.",
